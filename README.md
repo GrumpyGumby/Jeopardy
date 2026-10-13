@@ -1,2 +1,32 @@
-# Jeopardy
-I'm making a re-useable Jeorpardy Template for me to use for any scenario. Complete with animations and randomized daily double questions.
+# Bearcat Jeopardy
+
+A reusable Jeopardy template you can use for any occasion, with zooming clue cards, fading answers and randomized Daily Doubles. It's one static web page with no framework and no build step, so it runs on any laptop you cast to a TV.
+
+## Run it
+
+Open `index.html` in a browser. To host it, upload the three files (`index.html`, `styles.css`, `game.js`) to any static host, such as GitHub Pages.
+
+## Fill in your clues
+
+Use either of these:
+
+- **In the browser:** click **Edit clues**, then click any tile to set its clue, answer and category. The Final tab becomes an editor too. A red dot marks every tile that's still blank, and the hint line counts the blanks left. Edits are saved to `localStorage`, so run the game from the same browser you prepped it in.
+- **In code:** fill in `ROUNDS` and `FINAL` at the top of `game.js`. Each clue is `[clue, answer]`, ordered from easiest (row 1) to hardest (row 5).
+
+## Settings (top of `game.js`)
+
+| Setting | What it does |
+|---|---|
+| `DRINKING` | Set to `false` to hide every drink line and rule |
+| `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
+| `DRINK` | Bonus sips and the drink rules for the final standings |
+
+The animation speed lives in the `--t-open` and `--t-fade` variables in `styles.css`.
+
+## How it works
+
+- All game state lives in one object, `S`. Every action changes it, saves it to `localStorage`, and redraws the page.
+- Tile keys are `round-category-row`, so `1-3-4` means Double Jeopardy, the fourth category, bottom row.
+- Clue cards grow out of the clicked tile using FLIP with CSS transitions. With reduced motion turned on, they fade instead.
+- Each game hides 1 Daily Double in round 1 and 2 in round 2, in different categories and in rows 3–5 only.
+- **New game** resets scores, used tiles and Daily Doubles, and keeps player names and clues.

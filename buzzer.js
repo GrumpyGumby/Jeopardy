@@ -63,6 +63,36 @@ function tryBroker(url, will) {
     client.once("error", fail);
   });
 }
+/* Private messages (Final Jeopardy wagers and answers).
+   The broker is public, so these are end-to-end encrypted between one phone and the game:
+   the game has a key pair for its room, and the QR link carries a fingerprint of its public key.
+   A phone checks the key it's sent against that fingerprint (so nobody on the broker can swap
+   in their own), makes its own key pair, and both sides derive a shared AES-GCM key (ECDH P-256).
+   Anyone reading the broker sees only ciphertext. Built into every modern browser (Web Crypto). */
+const Secret = (() => {
+  const ok = () => !!(window.crypto && crypto.subtle);
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const unb64 = s => Uint8Array.from(atob(String(s).replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  const pair = () => crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+  const pubRaw = async keyPair => b64(await crypto.subtle.exportKey("raw", keyPair.publicKey));
+  const fingerprint = async raw => b64(await crypto.subtle.digest("SHA-256", unb64(raw))).slice(0, 22);
+  async function shared(privateKey, otherRaw) {
+    const pub = await crypto.subtle.importKey("raw", unb64(otherRaw), { name: "ECDH", namedCurve: "P-256" }, false, []);
+    return crypto.subtle.deriveKey({ name: "ECDH", public: pub }, privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function seal(key, obj, aad) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(aad) }, key, enc.encode(JSON.stringify(obj)));
+    return { iv: b64(iv), ct: b64(ct) };
+  }
+  async function open(key, msg, aad) {
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(msg.iv), additionalData: enc.encode(aad) }, key, unb64(msg.ct));
+    return JSON.parse(dec.decode(pt));
+  }
+  return { ok, b64, unb64, pair, pubRaw, fingerprint, shared, seal, open };
+})();
+
 // Parse a message from the relay; anything odd is dropped
 function parseMsg(payload) {
   if (!payload || payload.length > 4000) return null;
@@ -80,10 +110,28 @@ const Buzzers = (() => {
 
   let client = null, broker = 0, status = "off", error = "", hooks = {}, retry = null, sweep = null;
   let room = /^[A-Z]{4}$/.test(saved.room) ? saved.room : "";
-  const phones = new Map();       // phone id → { player: index or null, seen: time of its last message }
+  const phones = new Map();       // phone id → { player: index or null, seen: time of its last message, key: its private-message key }
+  let hostKey = null;             // { room, priv, pub, fp, jwk }: this room's key pair for private messages
   let round = { id: 0, open: false, openedAt: 0, entries: [], winner: null, locked: [], note: "", timer: null };
 
-  const persist = () => { try { localStorage.setItem(STORE, JSON.stringify({ on: status !== "off", room })); } catch (e) {} };
+  const persist = () => { try { localStorage.setItem(STORE, JSON.stringify({ on: status !== "off", room, key: hostKey && hostKey.room === room ? { jwk: hostKey.jwk, pub: hostKey.pub } : saved.key && saved.room === room ? saved.key : null })); } catch (e) {} };
+
+  // The room's key pair, kept across reloads so phone links stay valid
+  async function ensureKey() {
+    if (!Secret.ok() || (hostKey && hostKey.room === room)) return;
+    try {
+      if (saved.key && saved.room === room && saved.key.jwk) {
+        const priv = await crypto.subtle.importKey("jwk", saved.key.jwk, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
+        hostKey = { room, priv, pub: saved.key.pub, jwk: saved.key.jwk, fp: await Secret.fingerprint(saved.key.pub) };
+      } else {
+        const kp = await Secret.pair();
+        const pub = await Secret.pubRaw(kp), jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+        hostKey = { room, priv: kp.privateKey, pub, jwk, fp: await Secret.fingerprint(pub) };
+      }
+      saved = { ...saved, room, key: { jwk: hostKey.jwk, pub: hostKey.pub } };
+      persist();
+    } catch (e) { hostKey = null; }
+  }
   const changed = () => hooks.changed && hooks.changed();
   const base = () => `${BUZZ.topic}/${room}`;
   const publish = (topic, msg, opts = { qos: 1 }) => { if (client && client.connected) client.publish(topic, JSON.stringify(msg), opts); };
@@ -111,6 +159,7 @@ const Buzzers = (() => {
       return;
     }
     if (status === "off") { c.end(true); return; }
+    await ensureKey();
     client = c;
     const online = () => {
       client.subscribe(`${base()}/up`, { qos: 1 });
@@ -155,6 +204,7 @@ const Buzzers = (() => {
     broadcast({ t: "bye" });
     disconnect(); phones.clear();
     room = makeCode();
+    hostKey = null; saved = { ...saved, key: null };
     status = "off";
     start();
   }
@@ -166,6 +216,7 @@ const Buzzers = (() => {
     phones.get(id).player = i;
     send(id, { t: "you", player: i });
     send(id, armMsg());
+    finaleTo(id);
     changed();
   }
 
@@ -181,7 +232,19 @@ const Buzzers = (() => {
     if (m.t === "hello") {
       send(id, playersMsg());
       if (ph.player !== null) send(id, { t: "you", player: ph.player });
-      return send(id, armMsg());
+      if (hostKey) send(id, { t: "key", pub: hostKey.pub });   // public; the phone checks it against the link's fingerprint
+      send(id, armMsg());
+      return finaleTo(id);
+    }
+    if (m.t === "pkey" && hostKey && typeof m.pub === "string" && m.pub.length < 200) {
+      Secret.shared(hostKey.priv, m.pub).then(key => { ph.key = key; changed(); finaleTo(id); }).catch(() => {});
+      return;
+    }
+    if (m.t === "sec" && ph.key && typeof m.iv === "string" && typeof m.ct === "string" && m.ct.length < 3000) {
+      Secret.open(ph.key, m, `${room}|${id}`)
+        .then(data => { if (data && typeof data === "object" && hooks.secret) hooks.secret(ph.player, data, id); })
+        .catch(() => {});
+      return;
     }
     if (m.t === "claim") {
       const i = Math.floor(+m.player);
@@ -276,16 +339,26 @@ const Buzzers = (() => {
     sync(); changed();
   }
 
-  // The phone link carries the room and which broker the game is on
+  /* ---------- Final Jeopardy on the phones ----------
+     Only public facts go out here (the stage, whether a wager is locked); amounts and answers never do. */
+  function finaleTo(id) {
+    const ph = phones.get(id);
+    if (!ph || !hooks.finaleInfo) return;
+    send(id, { t: "fj", ...hooks.finaleInfo(ph.player, !!ph.key) });
+  }
+  function finale() { phones.forEach((ph, id) => finaleTo(id)); }
+  const securePlayers = () => [...phones.values()].filter(p => p.key && p.player !== null).map(p => p.player);
+
+  // The phone link carries the room, which broker the game is on, and the fingerprint of the room's key
   function link() {
     const page = /^https?:$/.test(location.protocol) ? new URL("buzz.html", location.href).href : BUZZ.page;
     const custom = BUZZ.brokers[broker] !== defaultBrokers[broker];
-    return `${page}?room=${room}&b=${broker}${custom ? "&relay=" + encodeURIComponent(BUZZ.brokers[broker]) : ""}`;
+    return `${page}?room=${room}&b=${broker}${custom ? "&relay=" + encodeURIComponent(BUZZ.brokers[broker]) : ""}${hostKey && hostKey.room === room ? "&k=" + hostKey.fp : ""}`;
   }
   const defaultBrokers = [...BUZZ.brokers];
 
   return {
-    init, start, stop, newRoom, open, close, wrong, unlock, sync, removed, link,
+    init, start, stop, newRoom, open, close, wrong, unlock, sync, removed, link, finale, securePlayers,
     get status() { return status; }, get error() { return error; }, get room() { return room; },
     get active() { return status !== "off"; },
     get phones() { return [...phones.values()].map(p => p.player); },

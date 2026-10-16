@@ -4,7 +4,7 @@ A reusable Jeopardy template you can use for any occasion, with zooming clue car
 
 ## Run it
 
-Open `index.html` in a browser. To host it, upload the files (`index.html`, `styles.css`, `game.js`, `audio.js`, `buzzer.js`, `media.js`, and `buzz.html` with `phone.js` for phone buzzers) to any static host, such as GitHub Pages.
+Open `index.html` in a browser. To host it, upload the files (`index.html`, `styles.css`, `game.js`, `finale.js`, `audio.js`, `buzzer.js`, `media.js`, and `buzz.html` with `phone.js` for phone buzzers) to any static host, such as GitHub Pages.
 
 ## Fill in your clues
 
@@ -101,6 +101,46 @@ Daily Doubles are rare by design: one among the 20 Round 1 tiles, so after 10 pi
 **About media:**
 - Uploaded pictures and MP3s are saved in this browser (in IndexedDB, which has room for large GIFs), so they're only there on the computer and browser you uploaded them from. Pictures added by link work anywhere, as long as the site allows it.
 - YouTube videos need the game opened from its web address (such as GitHub Pages). YouTube won't play embedded videos in a page opened as a file on your computer. The card has an "Open it on YouTube" link as a backup.
+
+## The finale
+
+Final Jeopardy runs as a game-show finale. Each stage is saved, so a refresh picks up where you left off (the Final tab shows **Resume the finale**), and no stage ever charges a wager twice.
+
+1. **Wagers.** The Final tab shows the category and a card for each player with a score above $0. Each player wagers one of three ways:
+   - **📱 Phone:** sent privately from their phone. This needs a phone opened from the QR code; see "Privacy" below.
+   - **✍️ Paper:** written down. The host locks it now and types the amount in at that player's reveal.
+   - **⌨️ Typed:** the host types it into a hidden field.
+
+   Amounts stay hidden on the big screen; **Show amounts** reveals them for the host. A locked wager can't be changed by accident, and **Unlock** (with a confirm) allows corrections until the clue is revealed. **Reveal clue** stays disabled until every wager is locked.
+2. **The clue and countdown.** The 30-second countdown has **Pause**, **Resume**, **Restart** (with a confirm) and **End now**. When it runs out, it shows "Pens down" and "Time's up", and phone answers lock. The card shows who has answered, never what they answered.
+3. **Reveals.** Players are revealed one at a time, lowest score first so the leader goes last; the host can reorder them first. For each player:
+   1. Their name.
+   2. Their answer (a phone answer, or "read it from their paper").
+   3. The host's ✓ Correct or ✗ Incorrect (close spellings are the host's call).
+   4. Their wager.
+   5. The score counting up or down to the new total.
+
+   **Previous**, **Skip animation** and **Correct result** (recalculates using only the difference) are always there.
+4. **Champion.** "Bearcat Jeopardy Champion", or co-champions for a tie, with a trophy, confetti and the fanfare. If the top score is $0 or less, it says "Top of the board" instead. **Replay** and **Skip** never change scores.
+5. **Standings.** The existing standings, plus **📸 Save game night memory**: a 1920×1080 PNG with the logo, date, champion, scores in each player's color, and the Yearbook awards.
+6. **The Bearcat Yearbook.** Awards worked out from the game:
+   - 👑 **Trivia Royalty:** highest score.
+   - 📚 **The Walking Encyclopedia:** most correct answers.
+   - 🔥 **The Comeback Queen:** biggest gap to the leader climbed back.
+   - 🎲 **The Chaos Coordinator:** boldest Daily Double, by share of the most they could have bet.
+   - ⭐ **Most Iconic Moment:** the host's pick.
+
+   **Edit awards** renames an award, changes its recipient or hides it. The game logs each judged answer, Daily Double wager and score change from this version on. A game already underway before that only gets the awards it can be sure of, and the host can hand out the rest.
+7. **One last memory.** An unscored conversation starter with **Shuffle**, **Next**, **Skip** and **Finish game**.
+
+**Privacy.** The phone connection uses a public message broker that anyone could read, so wagers and answers are end-to-end encrypted between each phone and the game:
+- Each room has its own key pair, and the QR code link carries a fingerprint of the game's public key.
+- A phone checks the game's key against that fingerprint, then the two agree on a shared key (ECDH P-256 and AES-GCM, using the browser's built-in Web Crypto).
+- Anyone reading the broker sees only scrambled data.
+
+Phones that typed the room code by hand have no fingerprint, so they're told to use paper. Limits to know:
+- **Who sends a wager isn't verified.** Someone who learns the room code could claim a player's podium and send a wager for them, the same way they could buzz for them. If a wager locks unexpectedly, the host can unlock it.
+- **Answers live on the host's computer.** Wagers and answers are saved in its browser.
 
 ## How it works
 

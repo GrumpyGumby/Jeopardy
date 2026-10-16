@@ -63,7 +63,7 @@ const HOUSE = {
    ========================================================= */
 const KEY = "bearcat-jeopardy-v1";
 let S = load();       // the game state
-let view = "r0";      // r0 | r1 | final | rules
+let view = S.final.stage && S.final.stage !== "done" ? "final" : "r0";   // r0 | r1 | final | rules (a refresh mid-finale comes back to Final)
 let editMode = false; // "Edit clues" toggle
 let cur = null;       // the clue card that is open: { k, value, judged, only, pick }
 let scene = null;     // what the overlay shows, for the music: clue | reveal | final-clue | final-reveal | standings
@@ -72,21 +72,36 @@ let look = null;      // the color and pattern being edited in a player pop-up
 
 function fresh() {
   return {
-    players: ["Player 1", "Player 2", "Player 3", "Player 4"].map((name, i) => ({ name, score: 0, ...defaultLook(i) })),
+    players: ["Player 1", "Player 2", "Player 3", "Player 4"].map((name, i) => ({ id: newPid(), name, score: 0, ...defaultLook(i) })),
     used: {},        // { "0-2-3": true }
     cols: ROUNDS.map(() => CATEGORIES),           // columns in each round
     dd: pickDD({}, ROUNDS.map(() => CATEGORIES)), // Daily Double keys
     edits: {},       // custom clues ("0-2-3": [q, a]), category names ("cat-0-2"), final
-    final: { wagers: {}, judged: {} }
+    final: freshFinal(),
+    // Yearbook tracking (see Track in finale.js): judged clues, Daily Double wagers, score snapshots
+    log: [], ddLog: [], hist: [], seq: 0, tracking: true,
+    book: { hide: {}, who: {}, title: {}, note: "" }
   };
 }
+// Final Jeopardy: wagers and judgments, plus the finale's locks, phone answers, reveal results and stage
+function freshFinal() {
+  return { wagers: {}, judged: {}, locked: {}, src: {}, answers: {}, res: {}, show: false,
+           timeLeft: null, timeUp: false, stage: null, order: null, at: 0 };
+}
+function newPid() { return Math.random().toString(36).slice(2, 10); }   // a stable player id for the Yearbook
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s && s.players) {
       const base = fresh();
       const st = { ...base, ...s, final: { ...base.final, ...(s.final || {}) } };
-      st.players = st.players.map((p, i) => ({ ...p, ...lookOf(p, i) }));
+      st.players = st.players.map((p, i) => ({ ...p, ...lookOf(p, i), id: typeof p.id === "string" && p.id ? p.id : newPid() }));
+      // Yearbook tracking: a save from before it existed only counts if nothing had happened yet
+      if (!Array.isArray(s.log)) {
+        st.log = []; st.ddLog = []; st.hist = []; st.seq = 0;
+        st.tracking = !Object.keys(st.used || {}).length && st.players.every(p => !p.score);
+      }
+      st.book = { ...base.book, ...(s.book || {}) };
       st.cols = ROUNDS.map((_, r) => {
         const n = Array.isArray(s.cols) ? Math.round(s.cols[r]) : NaN;
         return n >= 1 && n <= MAX_CATEGORIES ? n : CATEGORIES;
@@ -260,25 +275,7 @@ function renderFinal() {
       <p class="hint">${n ? `<strong>${n}</strong>&nbsp;blank${n === 1 ? "" : "s"} left in the game` : "Every clue is filled in."}</p>
     </div>`;
   }
-  const list = finalists();
-  const wagers = list.length ? list.map(i => {
-    const p = S.players[i], judged = S.final.judged[i] !== undefined;
-    return `<label class="wager" style="--pc:${pcolor(i)}">
-      <span class="nm">${chip(i)}${esc(p.name)}</span>
-      <span class="cap">${judged ? "Judged" : `Up to ${fmt(p.score)}`}</span>
-      <input type="number" inputmode="numeric" min="0" max="${Math.max(0, p.score)}" step="1"
-             data-wager="${i}" value="${S.final.wagers[i] ?? ""}" placeholder="0" ${judged ? "disabled" : ""}>
-    </label>`;
-  }).join("") : `<p class="muted">No one has a positive score, so no one can wager.</p>`;
-  return `<div class="final">
-    <p class="eyebrow">Final Jeopardy · Category</p>
-    <h2 class="final-cat">${esc(F.cat) || "Category to come"}</h2>
-    <div class="wagers">${wagers}</div>
-    <div class="row">
-      <button class="btn primary" data-act="final-clue">Reveal clue</button>
-      <button class="btn" data-act="standings">Final standings</button>
-    </div>
-  </div>`;
+  return Finale.wagerStageHTML();         // wagers, locks and the way into the clue (finale.js)
 }
 
 function ddCount(r) {
@@ -326,7 +323,10 @@ function render() {
                  : view === "rules" ? renderRules() : renderFinal();
   if (editMode && view === "final") { Media.update(); Media.clipUpdate(); }
   updateMusic();
+  const ps = Finale.phoneStage();                       // tell phones when the finale stage changes
+  if (ps !== lastPhoneStage || view === "final") { lastPhoneStage = ps; Finale.tellPhones(); }
 }
+let lastPhoneStage = "off";
 
 /* Each round has three moods that follow the clue: board → clue → answer revealed */
 function updateMusic() {
@@ -336,7 +336,10 @@ function updateMusic() {
     scene === "clue" ? (dd ? "dd" : `r${r}.clue`) :
     scene === "reveal" ? (dd ? "dd.reveal" : `r${r}.reveal`) :
     scene === "final-clue" ? "final.clue" :
-    scene === "final-reveal" || scene === "standings" ? "final.reveal" :
+    scene === "final-reveal" || scene === "standings" || scene === "champion" ? "final.reveal" :
+    scene === "fx-reveal" ? "final.board" :            // the player-by-player reveals: slow and suspenseful
+    scene === "fx-book" ? "r0.reveal" :                // the Yearbook: bright and happy
+    scene === "fx-memory" ? "r0.board" :               // One Last Memory: back to the easygoing theme
     view === "r1" ? "r1.board" : view === "final" ? "final.board" : "r0.board");
 }
 
@@ -488,8 +491,10 @@ function judge(j, d) {
   if (!cur || !S.players[j]) return;
   const prev = cur.judged[j] || 0;
   const next = prev === d ? 0 : d;
+  const before = S.players[j].score - prev * cur.value;
   S.players[j].score += (next - prev) * cur.value;
   cur.judged[j] = next;
+  Track.clue(cur.k, j, cur.value, next, before, cur.only !== null);
   if (next === 1) control = j;
   if (cur.only === null) {                 // phone buzzers: a wrong answer locks that player out
     if (next === -1) Buzzers.wrong(j);
@@ -625,6 +630,7 @@ function ddGo() {
   const wager = clamp(Math.round(+$("ddWager").value || 5), 5, max);
   cur.value = wager;
   cur.only = j;
+  Track.dd(cur.k, j, wager, max);
   cur.pick = $("ddPick") ? +$("ddPick").value : null;
   Sound.sfx("ddGo");
   swapOv(clueHTML());
@@ -753,7 +759,7 @@ function savePlayer(i) {
   p.name = $("plName").value.trim() || p.name;
   Object.assign(p, look);
   const sc = Math.round(+$("plScore").value);
-  if (Number.isFinite(sc)) p.score = sc;
+  if (Number.isFinite(sc) && sc !== p.score) { p.score = sc; Track.snap("adjust"); }
   Sound.sfx("save");
   save(); closeOv();
 }
@@ -764,15 +770,15 @@ function removePlayer(i) {
   // Final wagers and results are keyed by player index, so shift the later ones down
   const shift = o => Object.fromEntries(Object.entries(o)
     .filter(([k]) => +k !== i).map(([k, v]) => [+k > i ? +k - 1 : +k, v]));
-  S.final.wagers = shift(S.final.wagers);
-  S.final.judged = shift(S.final.judged);
+  ["wagers", "judged", "locked", "src", "answers", "res"].forEach(k => { S.final[k] = shift(S.final[k] || {}); });
+  if (Array.isArray(S.final.order)) S.final.order = S.final.order.filter(x => x !== i).map(x => x > i ? x - 1 : x);
   Buzzers.removed(i);
   Sound.sfx("remove");
   save(); closeOv();
 }
 
 function addPlayer() {
-  S.players.push({ name: `Player ${S.players.length + 1}`, score: 0, ...defaultLook(S.players.length) });
+  S.players.push({ id: newPid(), name: `Player ${S.players.length + 1}`, score: 0, ...defaultLook(S.players.length) });
   Sound.sfx("add");
   save(); renderScores();
   if (view === "final") render();
@@ -839,6 +845,7 @@ function newGame() {
   S = { ...fresh(), players: S.players.map(p => ({ ...p, score: 0 })), edits: S.edits, cols: S.cols };
   S.dd = pickDD();
   view = "r0";
+  Finale.tellPhones();
   Sound.sfx("newGame");
   save(); render();
 }
@@ -859,52 +866,72 @@ function finalClueHTML() {
     <p class="clue">${esc(F.clue) || '<span class="muted">No Final clue yet. Use Edit clues on the Final tab.</span>'}</p>
     <p class="answer" id="ans">${esc(F.answer)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
-    <div class="judges">${list.map(finalJudgeHTML).join("") || '<p class="muted">No one is playing Final Jeopardy.</p>'}</div>
+    <div class="timer-ctl" id="timerCtl"></div>
+    <div class="responses" id="responses" aria-live="polite">${list.length ? Finale.responsesHTML() : '<p class="muted">No one is playing Final Jeopardy.</p>'}</div>
     <div class="row">
       <button class="btn ghost" data-act="close">Back</button>
-      <button class="btn primary" data-act="standings">Final standings</button>
+      <button class="btn primary" data-fx="reveals">Start the reveals →</button>
     </div>
   </div>`;
 }
 
-function finalJudgeHTML(i) {
-  const p = S.players[i], res = S.final.judged[i], done = res !== undefined;
-  return `<div class="judge" id="fj-${i}" style="--pc:${pcolor(i)}">
-    ${chip(i)}<span class="nm">${esc(p.name)}</span>
-    <span class="w">${fmt(S.final.wagers[i] || 0)}</span>
-    <button class="jb ok ${res === 1 ? "on" : ""}" data-fj="${i}" data-d="1" ${done ? "disabled" : ""} aria-label="${esc(p.name)} right">✓</button>
-    <button class="jb no ${res === -1 ? "on" : ""}" data-fj="${i}" data-d="-1" ${done ? "disabled" : ""} aria-label="${esc(p.name)} wrong">✗</button>
-  </div>`;
-}
-
-/* Each player is judged once, so a double tap can't double-count */
+/* Score one Final Jeopardy answer. Each player is scored once, so a double tap,
+   a refresh or a replayed reveal can't double-count; corrections go through Finale (difference only). */
 function judgeFinal(i, d) {
   if (S.final.judged[i] !== undefined) return;
-  S.players[i].score += d * (S.final.wagers[i] || 0);
+  const r = Finale.result(i), w = +S.final.wagers[i] || 0;
+  S.players[i].score += d * w;
   S.final.judged[i] = d;
-  Sound.sfx(d === 1 ? "right" : "wrong");
+  Object.assign(r, { correct: d === 1, wager: w, delta: d * w, final: S.players[i].score, applied: true });
+  Track.snap("final");
   save(); renderScores();
-  const el = $(`fj-${i}`);
-  if (el) el.outerHTML = finalJudgeHTML(i);
 }
 
+/* The Final Jeopardy countdown. The time left is saved, so closing the card or a refresh
+   pauses it; once it runs out (or the host ends it) answers are locked for good. */
+let timerPaused = false;
 function startTimer() {
   stopTimer();
-  let left = FINAL_SECONDS;
-  const paint = () => {
-    const el = $("timer");
-    if (!el) return;
-    el.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Pens down";
-    el.classList.toggle("low", left <= 5);
-  };
-  paint();
-  timer = setInterval(() => {
-    left--; paint();
-    if (left > 0 && left <= 5) Sound.sfx("countdown");
-    if (left <= 0) { Sound.sfx("pensDown"); stopTimer(); }
-  }, 1000);
+  timerPaused = false;
+  if (!S.final.timeUp) {
+    if (S.final.timeLeft === null || S.final.timeLeft === undefined) S.final.timeLeft = FINAL_SECONDS;
+    timer = setInterval(() => {
+      S.final.timeLeft--; save(); paintTimer();
+      if (S.final.timeLeft > 0 && S.final.timeLeft <= 5) Sound.sfx("countdown");
+      if (S.final.timeLeft <= 0) expireTimer();
+    }, 1000);
+  }
+  paintTimer();
 }
 function stopTimer() { clearInterval(timer); timer = null; }
+function expireTimer() {
+  stopTimer();
+  S.final.timeLeft = 0; S.final.timeUp = true;
+  Sound.sfx("pensDown");
+  save(); paintTimer(); Finale.paintResponses(); Finale.tellPhones();
+}
+function pauseTimer() { if (!timer) return; stopTimer(); timerPaused = true; Sound.sfx("toggleOff"); paintTimer(); }
+function resumeTimer() { if (S.final.timeUp) return; Sound.sfx("toggleOn"); startTimer(); }
+function restartTimer() {
+  if (!confirm(`Restart the countdown from ${FINAL_SECONDS} seconds? Answers already in are kept.`)) return;
+  S.final.timeUp = false; S.final.timeLeft = FINAL_SECONDS;
+  save(); Sound.sfx("click"); startTimer(); Finale.tellPhones();
+}
+function endTimer() { if (S.final.timeUp || !confirm("End the countdown now? Answers lock.")) return; expireTimer(); }
+function paintTimer() {
+  const el = $("timer"), ctl = $("timerCtl");
+  const left = S.final.timeUp ? 0 : S.final.timeLeft ?? FINAL_SECONDS;
+  if (el) {
+    el.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}${timerPaused ? " ⏸" : ""}` : "Pens down";
+    el.classList.toggle("low", left <= 5);
+    el.classList.toggle("expired", !!S.final.timeUp);
+  }
+  if (ctl) ctl.innerHTML = S.final.timeUp
+    ? `<span class="times-up">⏰ Time's up · answers are locked</span><button class="btn mini ghost" data-fx="timer-restart">Restart countdown</button>`
+    : `${timer ? `<button class="btn mini ghost" data-fx="timer-pause">⏸ Pause</button>` : `<button class="btn mini ghost" data-fx="timer-resume">▶ Resume</button>`}
+       <button class="btn mini ghost" data-fx="timer-restart">↻ Restart</button>
+       <button class="btn mini ghost" data-fx="timer-end">⏹ End now</button>`;
+}
 
 function standingsHTML() {
   const ranked = S.players.map((p, i) => ({ ...p, i })).sort((a, b) => b.score - a.score);
@@ -1097,9 +1124,11 @@ function buzzesHTML() {
 }
 
 Buzzers.init({
+  finaleInfo: (i, secure) => Finale.info(i, secure),
+  secret: (i, data) => Finale.secret(i, data),
   players: () => S.players.map((p, i) => ({ name: p.name, score: p.score, ...lookOf(p, i) })),
   addPlayer: name => {
-    S.players.push({ name, score: 0, ...defaultLook(S.players.length) });
+    S.players.push({ id: newPid(), name, score: 0, ...defaultLook(S.players.length) });
     Sound.sfx("add");
     save(); renderScores();
     if (view === "final") render();
@@ -1111,6 +1140,8 @@ Buzzers.init({
   },
   changed: () => {
     renderNav();
+    // a phone linking privately can change the Final tab's wager options
+    if (view === "final" && !editMode && ov.hidden && !(document.activeElement && document.activeElement.matches("input, textarea, select"))) main.innerHTML = renderFinal();
     if ($("buzzBody") && !closing) { $("buzzBody").innerHTML = buzzBodyHTML(); drawQR(); }
     if ($("buzzes")) $("buzzes").innerHTML = buzzesHTML();
     if ($("buzzes") && Buzzers.round.winner === null) ov.querySelectorAll("[data-judge].buzzed").forEach(el => el.classList.remove("buzzed"));
@@ -1130,7 +1161,7 @@ document.addEventListener("click", e => {
     view = t.dataset.view; return render();
   }
   if (t.dataset.j) return judge(+t.dataset.j, +t.dataset.d);
-  if (t.dataset.fj) return judgeFinal(+t.dataset.fj, +t.dataset.d);
+  if (t.dataset.fx) return Finale.act(t);
   if (t.dataset.player) { Sound.sfx("pop"); return openPlayer(+t.dataset.player); }
   if (t.dataset.ddp) return pickFinder(+t.dataset.ddp);
   if (t.classList.contains("clip-play")) return Media.toggleClip(t);
@@ -1176,12 +1207,16 @@ document.addEventListener("click", e => {
     case "edit-mode":     editMode = !editMode; Sound.sfx(editMode ? "toggleOn" : "toggleOff"); return render();
     case "new-game":      Sound.sfx("click"); return newGame();
     case "final-clue":
+      if (finalists().some(i => !S.final.locked[i])) { Sound.sfx("wrong"); return; }   // lock every wager first
+      S.final.stage = "clue"; save();
+      main.innerHTML = renderFinal();                  // wagers are frozen from here on
       Sound.sfx("swooshIn"); Sound.sfx("finalReveal");
       scene = "final-clue"; updateMusic();
       openOv(finalClueHTML());
       showMedia();
-      Buzzers.close("Final Jeopardy! Write down your answer.");
-      return startTimer();
+      Buzzers.close("Final Jeopardy!");
+      startTimer();
+      return Finale.tellPhones();
     case "standings":     return showStandings();
     case "sound":         Sound.sfx("pop"); return openOv(soundHTML());
     case "buzzers":       Sound.sfx("pop"); openOv(buzzPanelHTML()); return drawQR();
@@ -1215,6 +1250,7 @@ document.addEventListener("input", e => {
   if (t.id === "plColor") setLook({ color: t.value });
   if (t.id === "plName") $("lookName").textContent = t.value || "Player";
   if (t.id === "mdUrl" || t.id === "mdYt") Media.input(t);
+  Finale.bookInput(t);
 });
 
 /* Dials: drag up/down (or left/right), scroll, arrow keys; double-click resets */

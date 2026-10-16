@@ -29,6 +29,14 @@ let result = null;                                   // the latest buzz-in resul
 let pressed = null;                                  // the round id I buzzed in
 let offset = 0, samples = [], lastPong = 0;          // game clock = my clock + offset
 
+/* Final Jeopardy. Wagers and answers go to the game encrypted (see Secret in buzzer.js);
+   only a phone that opened the QR link has the fingerprint to check the game's key. */
+let fingerprint = /^[A-Za-z0-9_-]{22}$/.test(params.get("k") || "") ? params.get("k") : null;
+let secretKey = null;                                // shared with the game once the key checks out
+let secure = false, keyProblem = "";
+let fin = { stage: "off" };                          // what the game says about the finale
+let myWager = null, myAnswer = "";                   // kept on this phone only, to show back to the player
+
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => (n < 0 ? "−$" : "$") + Math.abs(n).toLocaleString();
 const okColor = c => /^#[0-9a-f]{6}$/i.test(c) ? c : "#4361ee";
@@ -163,6 +171,12 @@ function onMessage(m) {
     if (m.first === me && !wasFirst) buzz([60, 40, 120]);
     return render();
   }
+  if (m.t === "key") return checkKey(m.pub);
+  if (m.t === "fj") {
+    fin = { stage: String(m.stage || "off"), eligible: !!m.eligible, cap: Math.max(0, +m.cap || 0), mode: String(m.mode || "paper"),
+            wager: String(m.wager || "none"), answer: String(m.answer || "none"), secure: !!m.secure };
+    return render();
+  }
   if (m.t === "bye") {
     ended = true; joined = false; linked = false;
     clearInterval(beat); clearTimeout(findTimer);
@@ -175,7 +189,77 @@ function onMessage(m) {
 function render() {
   if (!linked) return;
   if (me === null || !players[me]) return showPick();
+  if (fin.stage !== "off") return showFinale();
+  if (!$("buzzBtn")) screen.innerHTML = "";
   showBuzzer();
+}
+
+/* ---------- Private messages ---------- */
+async function checkKey(pub) {
+  secretKey = null; secure = false;
+  if (!fingerprint) { keyProblem = "link"; return render(); }
+  if (!Secret.ok()) { keyProblem = "browser"; return render(); }
+  try {
+    if (await Secret.fingerprint(pub) !== fingerprint) { keyProblem = "mismatch"; return render(); }
+    const kp = await Secret.pair();
+    secretKey = await Secret.shared(kp.privateKey, pub);
+    send({ t: "pkey", pub: await Secret.pubRaw(kp) });
+    secure = true; keyProblem = "";
+  } catch (e) { keyProblem = "browser"; }
+  render();
+}
+async function sendSecret(obj) {
+  if (!secretKey) return false;
+  send({ t: "sec", ...(await Secret.seal(secretKey, obj, `${room}|${myId}`)) });
+  return true;
+}
+
+/* ---------- Final Jeopardy screen ---------- */
+function showFinale() {
+  const p = players[me];
+  const head = `<div class="me"><span class="nm">${esc(p.name)}</span><span class="sc">${fmt(p.score)}</span></div>
+    <h2 class="fj-title">Final Jeopardy</h2>`;
+  let body = "";
+  const paperNote = why => `<p class="msg">${why}</p><p class="fj-big">✍️ Write your ${fin.stage === "wager" ? "wager" : "answer"} on paper and hand it to the host.</p>`;
+  if (fin.stage === "reveal") body = `<p class="fj-big">👀 Watch the big screen!</p><p class="msg">The results are being revealed one player at a time.</p>`;
+  else if (!fin.eligible) body = `<p class="fj-big">You're sitting this one out.</p><p class="msg">Only players with a score above $0 can wager. Cheer everyone on!</p>`;
+  else if (keyProblem) body = paperNote(keyProblem === "link" ? "Private answers only work from the QR code or full link. Scan it to send your wager and answer from this phone."
+    : keyProblem === "mismatch" ? "This phone couldn't confirm it's talking to the real game, so it won't send anything private."
+    : "This browser can't send private answers.");
+  else if (fin.mode !== "phone") body = paperNote("The host is collecting wagers and answers on paper for you.");
+  else if (!secure || !fin.secure) body = paperNote("Setting up a private connection…");
+  else if (fin.stage === "wager") {
+    if (fin.wager === "locked") body = `<p class="fj-big">🔒 Wager locked${myWager !== null ? `: <strong>${fmt(myWager)}</strong>` : ""}</p><p class="msg">Only you and the host can see it. Wait for the clue!</p>`;
+    else body = `<p class="msg">Read the category on the big screen, then pick your wager. Only the host's game will see it.</p>
+      <label class="fj-label">Your wager ($0 to ${fmt(fin.cap)})
+        <input id="fjWager" class="fj-input" type="number" inputmode="numeric" min="0" max="${fin.cap}" step="1" placeholder="0" value="${myWager ?? ""}"></label>
+      <button class="btn primary" id="fjLock">🔒 Lock my wager</button><p id="fjMsg" class="detail"></p>`;
+  } else if (fin.stage === "answer" || fin.stage === "closed") {
+    if (fin.answer === "submitted") body = `<p class="fj-big">✓ Answer submitted</p>${myAnswer ? `<p class="fj-mine">${esc(myAnswer)}</p>` : ""}<p class="msg">It stays hidden until your reveal.</p>`;
+    else if (fin.stage === "closed") body = `<p class="fj-big">✏️ Pens down!</p><p class="msg">Time ran out before an answer was sent.</p>`;
+    else body = `<label class="fj-label">Your answer (one try)
+        <textarea id="fjAnswer" class="fj-input" rows="3" maxlength="200" placeholder="What is…">${esc(myAnswer)}</textarea></label>
+      <button class="btn primary" id="fjSend">Submit my answer</button><p id="fjMsg" class="detail"></p>`;
+  } else body = `<p class="fj-big">Get ready for Final Jeopardy!</p>`;
+  const active = document.activeElement && document.activeElement.id;
+  const typing = active === "fjWager" || active === "fjAnswer" ? { id: active, value: document.activeElement.value } : null;
+  screen.innerHTML = `<div class="fj">${head}${body}</div>`;
+  if (typing && $(typing.id)) { $(typing.id).value = typing.value; $(typing.id).focus(); }
+  if ($("fjLock")) $("fjLock").onclick = async () => {
+    const v = Math.floor(+$("fjWager").value);
+    if (!($("fjWager").value !== "" && v >= 0 && v <= fin.cap)) { $("fjMsg").textContent = `Pick a whole number from 0 to ${fin.cap}.`; return buzz(80); }
+    myWager = v;
+    $("fjMsg").textContent = (await sendSecret({ t: "wager", amount: v })) ? "Sending…" : "Not connected privately yet.";
+    buzz(30);
+  };
+  if ($("fjSend")) $("fjSend").onclick = async () => {
+    const text = $("fjAnswer").value.trim().slice(0, 200);
+    if (!text) { $("fjMsg").textContent = "Type an answer first."; return buzz(80); }
+    if (!confirm("Submit this answer? You only get one.")) return;
+    myAnswer = text;
+    $("fjMsg").textContent = (await sendSecret({ t: "answer", text })) ? "Sending…" : "Not connected privately yet.";
+    buzz(30);
+  };
 }
 
 function showJoin(failed) {
@@ -186,6 +270,7 @@ function showJoin(failed) {
   const go = () => {
     const code = $("code").value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
     if (code.length !== 4) return;
+    if (code !== room) { fingerprint = null; params.delete("k"); }   // a typed code has no key fingerprint
     room = code; linked = false; joined = false;
     params.set("room", room); history.replaceState(null, "", "?" + params);
     connect();

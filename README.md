@@ -4,7 +4,7 @@ A reusable Jeopardy template you can use for any occasion, with zooming clue car
 
 ## Run it
 
-Open `index.html` in a browser. To host it, upload the files (`index.html`, `styles.css`, `game.js`, `audio.js`, `buzzer.js`, and `buzz.html` with `phone.js` for phone buzzers) to any static host, such as GitHub Pages.
+Open `index.html` in a browser. To host it, upload the files (`index.html`, `styles.css`, `game.js`, `audio.js`, `buzzer.js`, `media.js`, and `buzz.html` with `phone.js` for phone buzzers) to any static host, such as GitHub Pages.
 
 ## Fill in your clues
 
@@ -12,6 +12,7 @@ Use either of these:
 
 - **In the browser:** click **Edit clues**, then click any tile to set its clue, answer and category. The Final tab becomes an editor too. A red dot marks every tile that's still blank, and the hint line counts the blanks left. Edits are saved to `localStorage`, so run the game from the same browser you prepped it in.
 - **Add or delete categories:** in **Edit clues**, **+ Add category** puts a blank column on the right, and the **×** on a category header deletes that column. Columns to its right move left with their clues, used tiles and Daily Doubles. A deleted Daily Double hides again somewhere else. Each round has its own count, from 1 to 8, and it's saved with the game. Deleting a category that has clues asks first, because it can't be undone.
+- **Pictures, GIFs and YouTube videos:** the clue editor in **Edit clues** has a media section. Choose **Picture or GIF** and paste a link or tap **Upload from this device**, or choose **YouTube** and paste any YouTube link (a start time like `?t=1m30s` is kept). **Show it** picks whether it appears with the clue or only after the answer is revealed. Tiles with media show 🖼 or ▶ in edit mode. The game music fades out while a video is on screen. Final Jeopardy can have media too.
 - **In code:** fill in `ROUNDS` and `FINAL` at the top of `game.js`. Each clue is `[clue, answer]`, ordered from easiest (row 1) to hardest (row 5).
 
 ## Settings (top of `game.js`)
@@ -95,6 +96,10 @@ Click a podium to rename a player, fix their score, or choose their look: one of
 Opening a Daily Double throws a burst of confetti up from the bottom of the screen, which then floats back down and off screen. It's skipped for anyone whose device is set to reduce motion.
 
 Daily Doubles are rare by design: one among the 20 Round 1 tiles, so after 10 picks there's still an even chance nobody has found it. To check where they are, turn on **Edit clues**: a gold **DD** tag marks each one. **Reshuffle Daily Doubles** moves them, never onto a tile that's already been played.
+
+**About media:**
+- Uploaded pictures are saved in this browser (in IndexedDB, which has room for large GIFs), so they're only there on the computer and browser you uploaded them from. Pictures added by link work anywhere, as long as the site allows it.
+- YouTube videos need the game opened from its web address (such as GitHub Pages). YouTube won't play embedded videos in a page opened as a file on your computer. The card has an "Open it on YouTube" link as a backup.
 
 ## How it works
 

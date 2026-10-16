@@ -15,15 +15,24 @@
    ========================================================= */
 const Sound = (() => {
   const PREFS = "bearcat-jeopardy-sound";
-  let musicOn = true, sfxOn = true;
+  // Starting values come from SOUND in game.js; whatever players set in the Sound panel is remembered
+  function defaults() {
+    const d = { master: 100, music: 60, sfx: 80, hover: 60, echo: 50 };
+    if (typeof SOUND === "object") Object.keys(d).forEach(k => { if (Number.isFinite(SOUND[k])) d[k] = Math.max(0, Math.min(100, SOUND[k])); });
+    return { ...d, muted: false, musicOn: true, sfxOn: true, hoverOn: true, speed: 1, duck: true };
+  }
+  let P = defaults();
   try {
-    const p = JSON.parse(localStorage.getItem(PREFS));
-    if (p) { musicOn = p.music !== false; sfxOn = p.sfx !== false; }
+    const saved = JSON.parse(localStorage.getItem(PREFS));
+    if (saved) {
+      if (typeof saved.music === "boolean") saved.musicOn = saved.music, delete saved.music;   // older saves
+      if (typeof saved.sfx === "boolean") saved.sfxOn = saved.sfx, delete saved.sfx;
+      Object.keys(P).forEach(k => { if (typeof saved[k] === typeof P[k]) P[k] = saved[k]; });
+    }
   } catch (e) {}
-  const persist = () => { try { localStorage.setItem(PREFS, JSON.stringify({ music: musicOn, sfx: sfxOn })); } catch (e) {} };
-  const vol = k => (typeof SOUND === "object" && SOUND[k] != null ? SOUND[k] : 0.7);
+  const persist = () => { try { localStorage.setItem(PREFS, JSON.stringify(P)); } catch (e) {} };
 
-  let ctx = null, out, musicBus, sfxBus, verb, noiseBuf;
+  let ctx = null, out, master, musicBus, sfxBus, hoverBus, verbOut, verb, noiseBuf;
 
   /* ---------- Setup ---------- */
   function unlock() {
@@ -33,20 +42,24 @@ const Sound = (() => {
       ctx = new AC();
       out = ctx.createDynamicsCompressor();
       out.threshold.value = -12; out.ratio.value = 4; out.attack.value = .005; out.release.value = .2;
-      out.connect(ctx.destination);
+      master = ctx.createGain();
+      out.connect(master); master.connect(ctx.destination);
 
       verb = ctx.createConvolver();
       verb.buffer = impulse(2.4, 2.8);
-      const verbOut = ctx.createGain(); verbOut.gain.value = .3;
+      verbOut = ctx.createGain();
       verb.connect(verbOut); verbOut.connect(out);
 
       musicBus = ctx.createGain(); musicBus.gain.value = 0;
-      sfxBus = ctx.createGain(); sfxBus.gain.value = sfxOn ? vol("sfx") : 0;
+      sfxBus = ctx.createGain();
       [musicBus, sfxBus].forEach((bus, i) => {
         bus.connect(out);
         const send = ctx.createGain(); send.gain.value = i ? .25 : .35;
         bus.connect(send); send.connect(verb);
       });
+      hoverBus = ctx.createGain();                 // dry, so blips stay crisp
+      hoverBus.connect(out);
+      applyLevels(true);
 
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
       const d = noiseBuf.getChannelData(0);
@@ -57,7 +70,7 @@ const Sound = (() => {
       });
     }
     if (ctx.state === "suspended" && !document.hidden) ctx.resume();
-    if (musicOn) startSeq();
+    if (P.musicOn) startSeq();
   }
 
   function impulse(secs, decay) {
@@ -267,6 +280,18 @@ const Sound = (() => {
     [[0, 79, 4], [4, 76, 4], [8, 73, 4], [12, 69, 4]]
   ];
 
+  // The theme as a Daily Double: same rhythm, in E minor, galloping
+  const DAILY = [
+    [[0, 71, 3], [4, 76, 2], [6, 79, 4], [10, 78, 2], [12, 76, 4]],
+    [[0, 79, 4], [4, 76, 2], [6, 81, 6]],
+    [[0, 78, 2], [2, 81, 2], [4, 86, 4], [8, 81, 2], [10, 78, 2], [12, 74, 4]],
+    [[0, 75, 4], [4, 78, 2], [6, 83, 6], [12, 81, 4]],
+    [[0, 71, 3], [4, 76, 2], [6, 79, 4], [10, 78, 2], [12, 76, 4]],
+    [[0, 79, 4], [4, 76, 2], [6, 81, 6]],
+    [[0, 76, 2], [2, 81, 2], [4, 84, 4], [8, 83, 4], [12, 81, 4]],
+    [[0, 71, 2], [2, 75, 2], [4, 78, 2], [6, 81, 2], [8, 83, 4], [12, 87, 4]]
+  ];
+
   /* ---------- Arrangements ---------- */
   // Each gets { b (bar in phrase), step, t, sp (seconds per step), ch (chord), dest }
   const comp = (inst, ch, t, dur, v, dest, up = 0) => ch.notes.forEach(n => inst(n + up, t, dur, v, dest));
@@ -287,7 +312,7 @@ const Sound = (() => {
     },
     /* Round 1 — the clue: same key family, minor, quicker pulse, ticking clock */
     "r0.clue": {
-      bpm: 112, tr: 0, level: .42, melody: QUESTION, lead: [["bell", 0, 1.1]],
+      bpm: 112, tr: 0, level: .42, duck: true, melody: QUESTION, lead: [["bell", 0, 1.1]],
       chords: ["Dm", "Bb", "Gm", "A", "Dm", "Bb", "Gm", "A7"],
       play({ step, t, sp, ch, dest }) {
         if (step === 0) comp(I.pad, ch, t, sp * 15, 1, dest);
@@ -327,7 +352,7 @@ const Sound = (() => {
       }
     },
     "r1.clue": {
-      bpm: 132, tr: 2, level: .48, melody: QUESTION, lead: [["bell", 0, 1.1], ["brass", -12, .45]],
+      bpm: 132, tr: 2, level: .48, duck: true, melody: QUESTION, lead: [["bell", 0, 1.1], ["brass", -12, .45]],
       chords: ["Dm", "Bb", "Gm", "A", "Dm", "Bb", "Gm", "A7"],
       play({ b, step, t, sp, ch, dest }) {
         if (step === 0) comp(I.pad, ch, t, sp * 15, 1.2, dest);
@@ -370,7 +395,7 @@ const Sound = (() => {
     },
     /* Final Jeopardy — the 30 seconds: playful, tense thinking music */
     "final.clue": {
-      bpm: 120, tr: 0, level: .45, melody: THINK, lead: [["bell", 0, 1], ["pluck", -12, .8]],
+      bpm: 120, tr: 0, level: .45, duck: true, melody: THINK, lead: [["bell", 0, 1], ["pluck", -12, .8]],
       chords: ["Dm", "Gm", "C", "F", "Bb", "Gm", "A", "A7"],
       play({ step, t, sp, ch, dest }) {
         if (step % 4 === 0) I.bass(ch.bass + (step % 8 ? 7 : 0), t, sp * 1.2, .8, dest);
@@ -381,12 +406,33 @@ const Sound = (() => {
   };
   MOODS["final.reveal"] = MOODS["r1.reveal"];  // the big finish
 
+  /* Daily Double — the most intense music in the game, and the most fun:
+     the theme in E minor at a gallop, with brass, off-beat stabs and a full kit */
+  MOODS.dd = {
+    bpm: 152, tr: 0, level: .6, duck: true, melody: DAILY, lead: [["brass", 0, 1], ["bell", 12, .55]],
+    chords: ["Em", "C", "D", "B7", "Em", "C", "Am", "B7"],
+    play({ b, step, t, sp, ch, dest }) {
+      const s = hit("..x...x...x...x.", step); if (s) comp(I.stab, ch, t, sp, s, dest, 12);
+      const g = hit("x.ox.ox.ox.ox.oo", step); if (g) I.bigBass(ch.bass + (step % 4 === 0 ? 0 : 12), t, sp * .9, g, dest);
+      if (step === 0) comp(I.pad, ch, t, sp * 15, 1, dest);
+      if (step % 4 === 0) D.kick(t, .9, dest);
+      if (hit("....x.......x...", step)) { D.snare(t, .8, dest); D.clap(t, .5, dest); }
+      D.hat(t, step % 2 ? .4 : .6, dest);
+      if (hit("..o...o...o...o.", step)) D.hat(t, .7, dest, true);
+      if (b % 2 === 0 && step === 0) D.crash(t, .8, dest);
+      if (b % 4 === 3 && step >= 12) D.tom(t, 55 - (step - 12) * 3, .75, dest);
+      if (b % 4 === 1 && step === 8) D.swell(t, sp * 8, .7, dest);
+      if (step % 2 === 1) I.pluck(ch.notes[((step - 1) / 2) % ch.notes.length] + 24, t, sp, .55, dest);
+    }
+  };
+  MOODS["dd.reveal"] = MOODS["r1.reveal"];
+
   /* ---------- Sequencer ---------- */
   let timerId = null, nextT = 0, step = 0, bar = 0, mood = null, pending = null, bpm = 104;
 
   function startSeq() {
     if (timerId || !ctx || !mood) return;
-    nextT = ctx.currentTime + .1; step = 0; bar = 0; bpm = mood.bpm;
+    nextT = ctx.currentTime + .1; step = 0; bar = 0; bpm = mood.bpm * P.speed;
     level(mood);
     timerId = setInterval(tick, 25);
   }
@@ -394,8 +440,18 @@ const Sound = (() => {
     clearInterval(timerId); timerId = null;
     if (musicBus) musicBus.gain.setTargetAtTime(0, ctx.currentTime, .15);
   }
+  function applyLevels(now) {
+    if (!ctx) return;
+    const t = ctx.currentTime, tc = now ? .001 : .05;
+    master.gain.setTargetAtTime(P.muted ? 0 : P.master / 100, t, tc);
+    sfxBus.gain.setTargetAtTime(P.sfxOn ? P.sfx / 100 : 0, t, tc);
+    hoverBus.gain.setTargetAtTime(P.hoverOn ? P.hover / 100 : 0, t, tc);
+    verbOut.gain.setTargetAtTime(.3 * P.echo / 50, t, tc);
+    if (mood) level(mood);
+  }
   function level(m) {
-    musicBus.gain.setTargetAtTime(musicOn ? m.level * vol("music") : 0, ctx.currentTime, .35);
+    const lvl = m.duck && !P.duck ? m.level * 1.3 : m.level;
+    musicBus.gain.setTargetAtTime(P.musicOn ? lvl * P.music / 100 : 0, ctx.currentTime, .35);
   }
 
   function tick() {
@@ -407,7 +463,7 @@ const Sound = (() => {
         transition(from, mood, nextT);
         level(mood);
       }
-      bpm += (mood.bpm - bpm) * .15;                              // glide into the new tempo
+      bpm += (mood.bpm * P.speed - bpm) * .15;                              // glide into the new tempo
       const sp = 60 / bpm / 4, b = bar % mood.chords.length;
       const ch = chord(mood.chords[b], mood.tr);
       (mood.melody[b] || []).forEach(([s, n, len]) => {
@@ -427,13 +483,14 @@ const Sound = (() => {
     else if (to.melody === ANSWER) { D.crash(t, .6, dest); comp(I.bell, chord(to.chords[0], to.tr), t, .4, .6, dest, 12); }
     else if (to.melody === THEME && from.melody !== THEME) { D.tick(t, .5, dest); }
     else if (to.melody === THEME) { D.crash(t, .7, dest); D.kick(t, .8, dest); }
+    else if (to.melody === DAILY) { D.crash(t, .9, dest); D.kick(t, 1, dest); D.timpani(t, 40, .9, dest); }
     else if (to.melody === SUSPENSE) { D.timpani(t, chord(to.chords[0], to.tr).bass, 1, dest); }
   }
 
   function music(key) {
     const m = MOODS[key];
     if (!m) return;
-    if (!mood) { mood = m; if (ctx && musicOn) startSeq(); return; }
+    if (!mood) { mood = m; if (ctx && P.musicOn) startSeq(); return; }
     pending = m === mood ? null : m;
   }
 
@@ -500,6 +557,8 @@ const Sound = (() => {
       D.crash(t + .42, .8, d); D.kick(t + .42, .8, d);
       [84, 88, 91, 96].forEach((m, i) => I.bell(m, t + .5 + i * .06, .5, 1, d));
     },
+    select(t, d) { I.bell(91, t, .15, .9, d); I.pluck(79, t, .08, 1, d); },
+    shuffle(t, d) { [79, 84, 76, 88, 81, 86].forEach((m, i) => I.pluck(m, t + i * .045, .1, 1.8, d)); },
     countdown(t, d) { D.tick(t, 1.6, d); voice({ type: "sine", freq: 1320, t, dur: .02, gain: .06, attack: .002, decay: .06, sustain: .01, release: .03, dest: d }); },
     pensDown(t, d) {
       I.bell(76, t, .6, 2, d); I.bell(69, t + .28, 1.2, 2, d);
@@ -511,42 +570,50 @@ const Sound = (() => {
   let lastBlip = 0;
   const panners = {};
   function blip(pitch = 0, pan = 0) {
-    const lvl = typeof SOUND === "object" && SOUND.hover != null ? SOUND.hover : 1;
-    if (!ctx || !sfxOn || lvl <= 0 || ctx.state !== "running") return;
+    if (!ctx || !P.hoverOn || ctx.state !== "running") return;
     const now = ctx.currentTime;
     if (now - lastBlip < .03) return;                  // sweeping fast across tiles stays a light patter
     lastBlip = now;
-    let dest = sfxBus;
+    let dest = hoverBus;
     if (pan && ctx.createStereoPanner) {
       const key = pan.toFixed(2);
-      if (!panners[key]) { panners[key] = ctx.createStereoPanner(); panners[key].pan.value = pan; panners[key].connect(sfxBus); }
+      if (!panners[key]) { panners[key] = ctx.createStereoPanner(); panners[key].pan.value = pan; panners[key].connect(hoverBus); }
       dest = panners[key];
     }
-    voice({ type: "sine", freq: hz(84 + pitch), t: now + .005, dur: .004, gain: .05 * lvl, attack: .002, decay: .025, sustain: .01, release: .015, dest });
+    voice({ type: "sine", freq: hz(84 + pitch), t: now + .005, dur: .004, gain: .07, attack: .002, decay: .025, sustain: .01, release: .015, dest });
   }
 
   function sfx(name) {
-    if (!ctx || !sfxOn || !S[name]) return;
+    if (!ctx || !P.sfxOn || !S[name]) return;
     S[name](ctx.currentTime + .01, sfxBus);
   }
 
-  /* ---------- Toggles ---------- */
-  function toggleMusic() {
-    musicOn = !musicOn; persist();
-    if (!ctx) return musicOn;
-    if (!musicOn) stopSeq();
-    else if (mood) { startSeq(); level(mood); }
-    return musicOn;
+  /* ---------- Settings (the Sound panel) ----------
+     master / music / sfx / hover / echo: 0–100
+     muted / musicOn / sfxOn / hoverOn / duck: true or false
+     speed: music tempo multiplier, e.g. 0.85, 1, 1.15 */
+  function set(key, value) {
+    if (!(key in P) || typeof value !== typeof P[key]) return;
+    P[key] = typeof value === "number" ? Math.max(key === "speed" ? .5 : 0, Math.min(key === "speed" ? 2 : 100, value)) : value;
+    persist();
+    if (!ctx) return;
+    if (key === "musicOn") { if (!P.musicOn) stopSeq(); else if (mood) startSeq(); }
+    applyLevels();
   }
-  function toggleSfx() {
-    sfxOn = !sfxOn; persist();
-    if (sfxBus) sfxBus.gain.setTargetAtTime(sfxOn ? vol("sfx") : 0, ctx.currentTime, .02);
-    return sfxOn;
+  function reset() {
+    const keep = P.muted;
+    P = defaults(); P.muted = keep;
+    persist();
+    if (!ctx) return;
+    if (P.musicOn && mood) startSeq();
+    applyLevels();
   }
 
   return {
-    unlock, music, sfx, blip, toggleMusic, toggleSfx,
-    get musicOn() { return musicOn; }, get sfxOn() { return sfxOn; },
+    unlock, music, sfx, blip, set, reset,
+    get: key => P[key],
+    defaults: () => defaults(),
+    get musicOn() { return P.musicOn; }, get sfxOn() { return P.sfxOn; },
     get mood() { return mood && Object.keys(MOODS).find(k => MOODS[k] === mood); }   // for testing
   };
 })();

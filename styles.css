@@ -47,7 +47,7 @@ nav { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .nav-sp { width: 10px; }
 .tab.tool.on { background: var(--gold); color: var(--edge); border-color: var(--gold); }
 .tab.snd.on { background: var(--cell); color: var(--gold); border-color: var(--cell-hi); }
-.tab.snd:not(.on) { text-decoration: line-through; }
+.tab.snd:not(.on) { color: var(--bad); border-color: var(--bad); }
 
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .board-wrap { overflow-x: auto; }
@@ -87,13 +87,17 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .scores { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 .pod {
   min-width: 150px; flex: 0 1 200px; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  background: var(--cell); border: 0; border-top: 4px solid var(--gold); border-radius: 4px; padding: 10px 14px;
+  background-color: var(--cell); border: 0; border-top: 5px solid var(--pc, var(--gold)); border-radius: 4px; padding: 10px 14px;
 }
-.pod:hover { background: var(--cell-hi); }
-.pod .nm { font-family: var(--f-data); font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.pod:hover { background-color: var(--cell-hi); }
+.pod.pl:hover { background-color: color-mix(in srgb, var(--pc) 50%, var(--stage)); }
+.pod .nm { font-family: var(--f-data); font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink); }
+.pod .nm, .pod .sc, .look-preview .nm, .look-preview .sc, .pp .nm, .pp .sc {
+  text-shadow: 0 0 4px var(--edge), 2px 2px 0 var(--edge);
+}
 .pod .sc { font-family: var(--f-display); font-size: clamp(24px, 2.6vw, 38px); letter-spacing: .02em; }
 .sc.neg { color: var(--bad); }
-.pod.add { flex: 0 0 auto; min-width: 110px; justify-content: center; background: transparent;
+.pod.add { flex: 0 0 auto; min-width: 110px; justify-content: center; background-color: transparent;
   border: 2px dashed var(--cell-hi); color: var(--muted); font-family: var(--f-data); font-weight: 600; }
 
 /* ---------- Buttons and forms ---------- */
@@ -180,7 +184,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
 /* ---------- Judging ---------- */
 .judges { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-.judge { display: flex; align-items: center; gap: 6px; background: rgba(0, 3, 16, .35); border-radius: 8px; padding: 6px 6px 6px 12px; }
+.judge { display: flex; align-items: center; gap: 6px; background: rgba(0, 3, 16, .35); border-radius: 8px; padding: 6px 6px 6px 10px;
+  border-left: 5px solid var(--pc, transparent); }
 .judge .nm { font-family: var(--f-data); font-weight: 600; font-size: 14px; text-transform: uppercase; margin-right: 4px; }
 .judge .w { font-family: var(--f-data); font-size: 13px; color: var(--muted); margin-right: 4px; }
 .jb { width: 44px; height: 44px; border-radius: 6px; border: 2px solid; background: transparent; font-size: 22px; line-height: 1; }
@@ -208,7 +213,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .final-cat { font-family: var(--f-display); font-weight: 400; text-transform: uppercase; font-size: clamp(34px, 5vw, 72px);
   margin: 0; color: var(--gold); text-shadow: 3px 3px 0 var(--edge); }
 .wagers { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
-.wager { display: grid; gap: 6px; background: var(--cell); border-radius: 6px; padding: 12px 14px; min-width: 170px; text-align: left; }
+.wager { display: grid; gap: 6px; background: var(--cell); border-radius: 6px; padding: 12px 14px; min-width: 170px; text-align: left;
+  border-top: 5px solid var(--pc, var(--gold)); }
 .wager .nm { font-family: var(--f-data); font-weight: 600; text-transform: uppercase; font-size: 14px; }
 .wager .cap { font-family: var(--f-data); font-size: 12px; color: var(--muted); }
 .wager input { width: 100%; }
@@ -233,6 +239,121 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rules h2 { font-family: var(--f-display); font-weight: 400; text-transform: uppercase; color: var(--gold); font-size: 28px; margin: 22px 0 6px; letter-spacing: .02em; }
 .rules ul { margin: 0; padding-left: 22px; }
 .rules li { margin: 4px 0; }
+
+/* ---------- Player looks: a color (--pc) and a pattern ----------
+   .pl tints the background with the player's color; .pat-* draws the pattern over it */
+.pl {
+  --pk: color-mix(in srgb, var(--pc) 55%, transparent);      /* pattern ink */
+  background-color: color-mix(in srgb, var(--pc) 34%, var(--stage));
+}
+.pat-solid { background-image: none; background-color: color-mix(in srgb, var(--pc) 45%, var(--stage)); }
+.pat-stripes { background-image: repeating-linear-gradient(45deg, var(--pk) 0 8px, transparent 8px 18px); }
+.pat-pinstripe { background-image: repeating-linear-gradient(90deg, var(--pk) 0 2px, transparent 2px 11px); }
+.pat-dots { background-image: radial-gradient(var(--pk) 28%, transparent 31%); background-size: 16px 16px; }
+.pat-checks { background-image: conic-gradient(var(--pk) 25%, transparent 0 50%, var(--pk) 0 75%, transparent 0); background-size: 22px 22px; }
+.pat-grid {
+  background-image: linear-gradient(var(--pk) 2px, transparent 2px), linear-gradient(90deg, var(--pk) 2px, transparent 2px);
+  background-size: 16px 16px;
+}
+.pat-zigzag {
+  background-image: linear-gradient(135deg, var(--pk) 25%, transparent 25%), linear-gradient(225deg, var(--pk) 25%, transparent 25%),
+                    linear-gradient(315deg, var(--pk) 25%, transparent 25%), linear-gradient(45deg, var(--pk) 25%, transparent 25%);
+  background-position: -10px 0, -10px 0, 0 0, 0 0; background-size: 20px 20px;
+}
+.pat-diamonds {
+  background-image: linear-gradient(45deg, var(--pk) 25%, transparent 25% 75%, var(--pk) 75%),
+                    linear-gradient(-45deg, var(--pk) 25%, transparent 25% 75%, var(--pk) 75%);
+  background-size: 22px 22px;
+}
+.pat-waves { background-image: radial-gradient(circle at 10px 0, transparent 6px, var(--pk) 7px 9px, transparent 10px); background-size: 20px 12px; }
+.pat-confetti {
+  background-image: radial-gradient(circle at 20% 30%, var(--pk) 2.5px, transparent 3.5px),
+                    radial-gradient(circle at 70% 55%, var(--pk) 3px, transparent 4px),
+                    radial-gradient(circle at 40% 85%, var(--pk) 2px, transparent 3px),
+                    radial-gradient(circle at 85% 15%, var(--pk) 2px, transparent 3px);
+  background-size: 34px 34px;
+}
+
+/* a small badge of a player's look, next to their name */
+.chip {
+  display: inline-block; width: 18px; height: 18px; border-radius: 5px; margin-right: 8px; vertical-align: -3px;
+  border: 2px solid var(--pc); background-size: 10px 10px; flex: 0 0 auto;
+}
+
+/* player pop-up: live preview, color and pattern swatches */
+.look-preview {
+  width: min(260px, 100%); display: flex; flex-direction: column; align-items: center; gap: 4px;
+  border-top: 5px solid var(--pc); border-radius: 4px; padding: 12px 16px;
+}
+.look-preview .nm { font-family: var(--f-data); font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.look-preview .sc { font-family: var(--f-display); font-size: 36px; }
+.field { display: grid; gap: 8px; }
+.flabel { font-family: var(--f-data); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch {
+  width: 40px; height: 40px; border-radius: 8px; border: 2px solid var(--edge); padding: 0;
+  box-shadow: 0 0 0 2px transparent;
+}
+.swatch:not(.pl) { background-color: var(--pc); }
+.swatch.pl { border-color: var(--pc); }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 3px var(--gold); }
+.swatch.custom { position: relative; overflow: hidden; display: inline-block;
+  background: conic-gradient(#e63946, #f4c430, #8ac926, #00b4d8, #4361ee, #ff006e, #e63946); }
+.swatch.custom input { position: absolute; inset: -8px; width: calc(100% + 16px); height: calc(100% + 16px); opacity: 0; cursor: pointer; }
+
+/* Daily Double: who found it */
+.pick-player { display: flex; flex-wrap: wrap; gap: 8px; }
+.pp {
+  flex: 1 1 120px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 10px;
+  border: 0; border-top: 4px solid var(--pc); border-radius: 6px; box-shadow: 0 0 0 2px transparent;
+}
+.pp .nm { font-family: var(--f-data); font-weight: 600; font-size: 13px; text-transform: uppercase; }
+.pp .sc { font-family: var(--f-display); font-size: 20px; }
+.pp[aria-checked="true"] { box-shadow: 0 0 0 3px var(--gold); }
+
+/* Edit mode: where the Daily Doubles are hiding */
+.board.editing .cell.dd::before, .dd-key {
+  font-family: var(--f-data); font-weight: 600; font-size: 12px; letter-spacing: .05em;
+  color: var(--edge); background: var(--gold); border-radius: 4px; padding: 1px 5px; text-shadow: none;
+}
+.board.editing .cell.dd::before { content: "DD"; position: absolute; top: 6px; left: 6px; }
+.btn.mini { padding: 4px 10px; font-size: 12px; }
+
+/* ---------- Sound panel: volume dials ---------- */
+.sound-card { gap: 18px; }
+.knobs { display: flex; flex-wrap: wrap; justify-content: center; gap: 18px 22px; }
+.knob-box { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 112px; }
+.knob {
+  --a: calc(var(--v) * 2.7deg);                       /* the dial sweeps 270°, from 7 o'clock to 5 o'clock */
+  position: relative; width: 96px; height: 96px; border-radius: 50%; cursor: ns-resize; touch-action: none;
+  background: conic-gradient(from 225deg, var(--gold) 0 var(--a), var(--edge) var(--a) 270deg, transparent 270deg);
+}
+.knob-cap {
+  position: absolute; inset: 9px; border-radius: 50%; display: grid; place-items: center;
+  background: radial-gradient(circle at 35% 30%, var(--cell-hi), var(--cell) 60%, var(--cell-dim));
+  box-shadow: 0 3px 8px rgba(0, 0, 0, .5);
+}
+.knob-cap::before {                                     /* the pointer line */
+  content: ""; position: absolute; left: 50%; top: 6px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px;
+  background: var(--gold); transform-origin: 2px 33px; transform: rotate(calc(var(--a) - 135deg));
+}
+.knob-val { font-family: var(--f-display); font-size: 24px; color: var(--ink); }
+.knob-label { font-family: var(--f-data); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; text-align: center; }
+.knob-box.off .knob { filter: grayscale(1) brightness(.6); }
+.knob-box.off .knob-label { color: var(--muted); text-decoration: line-through; }
+.tgl {
+  background: transparent; border: 2px solid var(--muted); color: var(--muted); border-radius: 999px;
+  padding: 3px 14px; font-family: var(--f-data); font-weight: 600; font-size: 12px; text-transform: uppercase;
+}
+.tgl[aria-pressed="true"] { border-color: var(--good); color: var(--good); }
+.tgl.wide { padding: 8px 16px; font-size: 13px; }
+.tgl.wide::before { content: "✗ "; }
+.tgl.wide[aria-pressed="true"]::before { content: "✓ "; }
+.sound-opts { display: flex; flex-wrap: wrap; gap: 16px 24px; justify-content: center; align-items: end; }
+.seg { display: flex; border: 2px solid var(--cell-hi); border-radius: 8px; overflow: hidden; }
+.seg button { background: transparent; border: 0; padding: 8px 14px; font-family: var(--f-data); font-weight: 600; font-size: 13px; color: var(--muted); text-transform: uppercase; }
+.seg button + button { border-left: 2px solid var(--cell-hi); }
+.seg button[aria-checked="true"] { background: var(--gold); color: var(--edge); }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 640px) {

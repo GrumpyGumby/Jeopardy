@@ -17,6 +17,7 @@ const FINAL = { cat: "", clue: "", answer: "" };
 
 /* Settings */
 const FINAL_SECONDS = 30;     // Final Jeopardy countdown
+const SOUND = { music: 0.6, sfx: 0.8 };  // volumes from 0 to 1; either can also be muted from the header
 
 /* House rules template: an optional side game on top of the points.
    Turn it into whatever fits the crowd (prizes, forfeits, chores, candy...).
@@ -46,6 +47,7 @@ let S = load();       // the game state
 let view = "r0";      // r0 | r1 | final | rules
 let editMode = false; // "Edit clues" toggle
 let cur = null;       // the clue card that is open: { k, value, judged, only, pick }
+let scene = null;     // what the overlay shows, for the music: clue | reveal | final-clue | final-reveal | standings
 
 function fresh() {
   return {
@@ -134,7 +136,9 @@ function renderNav() {
     `<button class="tab ${view === v ? "on" : ""}" data-view="${v}" ${view === v ? 'aria-current="page"' : ""}>${label}</button>`).join("") +
     `<span class="nav-sp"></span>
      <button class="tab tool ${editMode ? "on" : ""}" data-act="edit-mode" aria-pressed="${editMode}">${editMode ? "Done editing" : "Edit clues"}</button>
-     <button class="tab tool" data-act="new-game">New game</button>`;
+     <button class="tab tool" data-act="new-game">New game</button>
+     <button class="tab tool snd ${Sound.musicOn ? "on" : ""}" data-act="music" aria-pressed="${Sound.musicOn}" title="Music on/off">♪ Music</button>
+     <button class="tab tool snd ${Sound.sfxOn ? "on" : ""}" data-act="sfx" aria-pressed="${Sound.sfxOn}" title="Sound effects on/off">Sound FX</button>`;
 }
 
 function renderBoard(r) {
@@ -237,6 +241,18 @@ function render() {
   main.innerHTML = view === "r0" ? renderBoard(0)
                  : view === "r1" ? renderBoard(1)
                  : view === "rules" ? renderRules() : renderFinal();
+  updateMusic();
+}
+
+/* Each round has three moods that follow the clue: board → clue → answer revealed */
+function updateMusic() {
+  const r = cur ? parseKey(cur.k).r : view === "r1" ? 1 : 0;
+  Sound.music(
+    scene === "clue" ? `r${r}.clue` :
+    scene === "reveal" ? `r${r}.reveal` :
+    scene === "final-clue" ? "final.clue" :
+    scene === "final-reveal" || scene === "standings" ? "final.reveal" :
+    view === "r1" ? "r1.board" : view === "final" ? "final.board" : "r0.board");
 }
 
 /* =========================================================
@@ -294,10 +310,12 @@ function swapOv(html) {
   if (card) card.classList.add("swap");
 }
 
-function closeOv() {
+function closeOv(sound = "swooshOut") {
   if (ov.hidden || closing) return;
   closing = true;
   stopTimer();
+  Sound.sfx(sound);
+  scene = null; updateMusic();   // the music turns back as the card shrinks
   const key = sourceTile && sourceTile.dataset.k;
   if (sourceTile && document.contains(sourceTile)) setTileVars(sourceTile); // re-measure after resize
   ov.classList.add("closing");
@@ -317,10 +335,12 @@ function closeOv() {
    ========================================================= */
 function onTile(btn) {
   const k = btn.dataset.k;
-  if (editMode) return openEditor(k, btn);
+  if (editMode) { Sound.sfx("pop"); return openEditor(k, btn); }
   const { r, i } = parseKey(k);
   cur = { k, value: ROUNDS[r].values[i], judged: {}, only: null, pick: null };
-  if (S.dd.includes(k)) return openOv(ddHTML(), btn);
+  scene = "clue"; updateMusic();
+  if (S.dd.includes(k)) { Sound.sfx("dd"); return openOv(ddHTML(), btn); }
+  Sound.sfx("swooshIn");
   openOv(clueHTML(), btn);
 }
 
@@ -370,6 +390,7 @@ function judge(j, d) {
   const next = prev === d ? 0 : d;
   S.players[j].score += (next - prev) * cur.value;
   cur.judged[j] = next;
+  Sound.sfx(next === 1 ? "right" : next === -1 ? "wrong" : "undo");
   save(); renderScores();
   ov.querySelectorAll(`[data-j="${j}"]`).forEach(b => {
     const on = +b.dataset.d === next;
@@ -379,6 +400,7 @@ function judge(j, d) {
 
 function markUsed() {
   if (cur) { S.used[cur.k] = true; save(); }
+  Sound.sfx("stamp");
   closeOv();
 }
 
@@ -427,6 +449,7 @@ function ddGo() {
   cur.value = wager;
   cur.only = j;
   cur.pick = $("ddPick") ? +$("ddPick").value : null;
+  Sound.sfx("ddGo");
   swapOv(clueHTML());
   $("revealBtn").focus({ preventScroll: true });
 }
@@ -455,11 +478,13 @@ function saveEdit(k) {
   const { r, c } = parseKey(k);
   S.edits[k] = [$("edQ").value.trim(), $("edA").value.trim()];
   S.edits[`cat-${r}-${c}`] = $("edCat").value.trim();
+  Sound.sfx("save");
   save(); closeOv();
 }
 
 function saveFinal() {
   S.edits.final = { cat: $("fnCat").value.trim(), clue: $("fnQ").value.trim(), answer: $("fnA").value.trim() };
+  Sound.sfx("save");
   save(); render();
 }
 
@@ -484,6 +509,7 @@ function savePlayer(i) {
   p.name = $("plName").value.trim() || p.name;
   const sc = Math.round(+$("plScore").value);
   if (Number.isFinite(sc)) p.score = sc;
+  Sound.sfx("save");
   save(); closeOv();
 }
 
@@ -495,11 +521,13 @@ function removePlayer(i) {
     .filter(([k]) => +k !== i).map(([k, v]) => [+k > i ? +k - 1 : +k, v]));
   S.final.wagers = shift(S.final.wagers);
   S.final.judged = shift(S.final.judged);
+  Sound.sfx("remove");
   save(); closeOv();
 }
 
 function addPlayer() {
   S.players.push({ name: `Player ${S.players.length + 1}`, score: 0 });
+  Sound.sfx("add");
   save(); renderScores();
   if (view === "final") render();
 }
@@ -508,6 +536,7 @@ function newGame() {
   if (!confirm("Start a new game? Scores, used tiles and Daily Doubles reset. Names and clues stay.")) return;
   S = { ...fresh(), players: S.players.map(p => ({ name: p.name, score: 0 })), edits: S.edits };
   view = "r0";
+  Sound.sfx("newGame");
   save(); render();
 }
 
@@ -548,6 +577,7 @@ function judgeFinal(i, d) {
   if (S.final.judged[i] !== undefined) return;
   S.players[i].score += d * (S.final.wagers[i] || 0);
   S.final.judged[i] = d;
+  Sound.sfx(d === 1 ? "right" : "wrong");
   save(); renderScores();
   const el = $(`fj-${i}`);
   if (el) el.outerHTML = finalJudgeHTML(i);
@@ -565,7 +595,8 @@ function startTimer() {
   paint();
   timer = setInterval(() => {
     left--; paint();
-    if (left <= 0) stopTimer();
+    if (left > 0 && left <= 5) Sound.sfx("countdown");
+    if (left <= 0) { Sound.sfx("pensDown"); stopTimer(); }
   }, 1000);
 }
 function stopTimer() { clearInterval(timer); timer = null; }
@@ -593,6 +624,8 @@ function standingsHTML() {
 
 function showStandings() {
   stopTimer();
+  Sound.sfx("fanfare");
+  scene = "standings"; updateMusic();
   if (!ov.hidden) swapOv(standingsHTML());
   else openOv(standingsHTML());
 }
@@ -605,10 +638,13 @@ document.addEventListener("click", e => {
   if (!t || closing) return;
 
   if (t.dataset.k) return onTile(t);
-  if (t.dataset.view) { view = t.dataset.view; return render(); }
+  if (t.dataset.view) {
+    Sound.sfx(t.dataset.view === "r1" && view !== "r1" ? "roundUp" : "tab");
+    view = t.dataset.view; return render();
+  }
   if (t.dataset.j) return judge(+t.dataset.j, +t.dataset.d);
   if (t.dataset.fj) return judgeFinal(+t.dataset.fj, +t.dataset.d);
-  if (t.dataset.player) return openPlayer(+t.dataset.player);
+  if (t.dataset.player) { Sound.sfx("pop"); return openPlayer(+t.dataset.player); }
   if (t.id === "addPlayer") return addPlayer();
 
   if (t.id === "revealBtn") {
@@ -616,6 +652,12 @@ document.addEventListener("click", e => {
     const on = ans.classList.toggle("shown");
     t.textContent = on ? "Hide answer" : "Reveal answer";
     t.setAttribute("aria-pressed", on);
+    Sound.sfx(on ? "twinkle" : "untwinkle");
+    if (scene) {
+      const fin = scene.startsWith("final");
+      scene = on ? (fin ? "final-reveal" : "reveal") : (fin ? "final-clue" : "clue");
+      updateMusic();
+    }
     return;
   }
 
@@ -626,11 +668,17 @@ document.addEventListener("click", e => {
     case "save-edit":     return saveEdit(t.dataset.key);
     case "save-final":    return saveFinal();
     case "save-player":   return savePlayer(+t.dataset.p);
-    case "remove-player": return removePlayer(+t.dataset.p);
-    case "edit-mode":     editMode = !editMode; return render();
-    case "new-game":      return newGame();
-    case "final-clue":    openOv(finalClueHTML()); return startTimer();
+    case "remove-player": Sound.sfx("click"); return removePlayer(+t.dataset.p);
+    case "edit-mode":     editMode = !editMode; Sound.sfx(editMode ? "toggleOn" : "toggleOff"); return render();
+    case "new-game":      Sound.sfx("click"); return newGame();
+    case "final-clue":
+      Sound.sfx("swooshIn"); Sound.sfx("finalReveal");
+      scene = "final-clue"; updateMusic();
+      openOv(finalClueHTML()); return startTimer();
     case "standings":     return showStandings();
+    case "music":         Sound.toggleMusic(); Sound.sfx(Sound.musicOn ? "toggleOn" : "toggleOff"); return renderNav();
+    case "sfx":           if (Sound.toggleSfx()) Sound.sfx("toggleOn"); return renderNav();
+    default:              Sound.sfx("click");
   }
 });
 
@@ -643,7 +691,15 @@ document.addEventListener("change", e => {
     save();
   }
   if (t.id === "ddPlayer") updateDDMax();
+  if (t.matches("input, select")) Sound.sfx("tick");
 });
+
+/* Browsers only allow sound after the first click or key press */
+document.addEventListener("pointerdown", e => {
+  Sound.unlock();
+  if (e.target.closest("input, select, textarea")) Sound.sfx("tap");
+}, true);
+document.addEventListener("keydown", () => Sound.unlock(), true);
 
 document.addEventListener("keydown", e => {
   if (ov.hidden || closing) return;

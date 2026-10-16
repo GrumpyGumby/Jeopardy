@@ -218,5 +218,193 @@ const Media = (() => {
     return after;
   }
 
-  return { clean, html, hydrate, fields, update, setKind, setWhen, input, pick, commit, forget, youtube };
+  /* =========================================================
+     Sound clips: an MP3 that plays from a pill-shaped player on the clue card,
+     its waveform on the left and a play button on the right. Separate from the
+     picture or video, so a clue can have both (a bird and its call).
+     ========================================================= */
+  const BARS = 56;
+
+  function cleanClip(c) {
+    if (!c || typeof c !== "object" || !/^[a-z0-9]{12}$/.test(c.id || "")) return null;
+    const peaks = Array.isArray(c.peaks) ? c.peaks.slice(0, BARS).map(v => Math.max(.04, Math.min(1, +v || 0))) : [];
+    return { id: c.id, name: String(c.name || "").slice(0, 80), dur: Math.max(0, +c.dur || 0), peaks, when: c.when === "answer" ? "answer" : "clue" };
+  }
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  // The pill. `src` is used in the editor preview, before the file is saved.
+  function clipHTML(c, src) {
+    c = src ? c : cleanClip(c);
+    if (!c) return "";
+    const peaks = c.peaks.length ? c.peaks : Array.from({ length: BARS }, () => .3);
+    return `<div class="clip${c.when === "answer" && !src ? " later" : ""}" ${src ? `data-src="${escA(src)}"` : `data-file="${c.id}"`} data-dur="${c.dur}">
+      <div class="clip-wave" role="slider" tabindex="0" aria-label="Sound clip position" aria-valuemin="0" aria-valuemax="${Math.round(c.dur)}" aria-valuenow="0">
+        ${peaks.map(v => `<i style="--h:${v.toFixed(2)}"></i>`).join("")}
+      </div>
+      <span class="clip-time">${mmss(c.dur)}</span>
+      <button type="button" class="clip-play" aria-label="Play sound clip"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-play" d="M8 5.5v13l11-6.5z"/><path class="i-pause" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+    </div>`;
+  }
+
+  // Waveform: the loudest sample in each of BARS slices, scaled so the loudest bar is full height
+  async function analyse(file) {
+    const buf = await file.arrayBuffer();
+    const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const ctx = new AC(1, 2, 44100);
+    const audio = await new Promise((resolve, reject) => {
+      const p = ctx.decodeAudioData(buf, resolve, reject);
+      if (p && p.then) p.then(resolve, reject);
+    });
+    const data = audio.getChannelData(0), step = Math.max(1, Math.floor(data.length / BARS));
+    const peaks = Array.from({ length: BARS }, (_, b) => {
+      let m = 0;
+      for (let i = b * step, end = Math.min(data.length, i + step); i < end; i += 16) m = Math.max(m, Math.abs(data[i]));
+      return m;
+    });
+    const top = Math.max(...peaks) || 1;
+    return { dur: audio.duration, peaks: peaks.map(v => +Math.max(.06, Math.sqrt(v / top)).toFixed(2)) };
+  }
+
+  /* ---------- Playing ---------- */
+  const players = new WeakMap();      // pill element → its Audio
+  let onPlaying = () => {};           // the game fades its music while a clip plays
+
+  async function audioFor(pill) {
+    if (players.has(pill)) return players.get(pill);
+    const src = pill.dataset.src || await fileUrl(pill.dataset.file).catch(() => null);
+    if (!src) { pill.classList.add("missing"); pill.querySelector(".clip-time").textContent = "Not in this browser"; return null; }
+    const a = new Audio(src);
+    a.preload = "auto";
+    a.addEventListener("play", () => { pill.classList.add("playing"); onPlaying(true); tick(pill, a); });
+    a.addEventListener("pause", () => { pill.classList.remove("playing"); onPlaying(anyPlaying()); });
+    a.addEventListener("ended", () => { a.currentTime = 0; paint(pill, a); });
+    players.set(pill, a);
+    return a;
+  }
+  const live = new Set();
+  const anyPlaying = () => [...live].some(a => !a.paused);
+
+  async function toggleClip(btn) {
+    const pill = btn.closest(".clip");
+    const a = await audioFor(pill);
+    if (!a) return;
+    live.add(a);
+    if (a.paused) { document.querySelectorAll(".clip.playing").forEach(p => p !== pill && players.get(p) && players.get(p).pause()); a.play().catch(() => {}); }
+    else a.pause();
+  }
+
+  // Fill the waveform up to the playhead
+  function paint(pill, a) {
+    const dur = a.duration || +pill.dataset.dur || 1, f = Math.min(1, a.currentTime / dur);
+    const bars = pill.querySelectorAll(".clip-wave i"), lit = Math.round(f * bars.length);
+    bars.forEach((b, k) => b.classList.toggle("on", k < lit));
+    pill.querySelector(".clip-time").textContent = a.paused && a.currentTime === 0 ? mmss(dur) : `${mmss(a.currentTime)} / ${mmss(dur)}`;
+    pill.querySelector(".clip-wave").setAttribute("aria-valuenow", Math.round(a.currentTime));
+    pill.querySelector(".clip-play").setAttribute("aria-label", a.paused ? "Play sound clip" : "Pause sound clip");
+  }
+  function tick(pill, a) {
+    paint(pill, a);
+    if (!a.paused && pill.isConnected) requestAnimationFrame(() => tick(pill, a));
+    else if (!pill.isConnected) a.pause();
+  }
+
+  async function seek(pill, fraction) {
+    const a = await audioFor(pill);
+    if (!a) return;
+    live.add(a);
+    const dur = a.duration || +pill.dataset.dur || 0;
+    a.currentTime = Math.max(0, Math.min(dur, fraction * dur));
+    paint(pill, a);
+  }
+  // Tap or drag on the waveform to jump; arrow keys skip 5 seconds
+  document.addEventListener("pointerdown", e => {
+    const wave = e.target.closest(".clip-wave");
+    if (!wave) return;
+    const r = wave.getBoundingClientRect();
+    seek(wave.closest(".clip"), (e.clientX - r.left) / r.width);
+  });
+  document.addEventListener("keydown", e => {
+    const wave = e.target.closest && e.target.closest(".clip-wave");
+    if (!wave || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    const pill = wave.closest(".clip"), a = players.get(pill), dur = (a && a.duration) || +pill.dataset.dur || 1;
+    seek(pill, ((a ? a.currentTime : 0) + (e.key === "ArrowRight" ? 5 : -5)) / dur);
+  });
+
+  // The card closed: silence every clip
+  function stopClips() { live.forEach(a => a.pause()); live.clear(); onPlaying(false); }
+
+  /* ---------- In the clue editor ---------- */
+  let clipDraft = null;               // { id?, blob?, name, dur, peaks, when } or null for no clip
+
+  function clipFields(saved) {
+    const c = cleanClip(saved);
+    clipDraft = c ? { ...c } : null;
+    return `<div class="field clip-field" id="clipField">
+      <span class="flabel">Sound clip <small>(optional, MP3)</small></span>
+      <div class="file-row">
+        <label class="btn mini file-btn">Upload an MP3<input type="file" id="clipFile" accept="audio/mpeg,.mp3"></label>
+        <button type="button" class="btn mini ghost" data-clip-remove>Remove</button>
+      </div>
+      <div class="media-when" id="clipWhen">
+        <span class="flabel">Show it</span>
+        <div class="seg" role="radiogroup" aria-label="When to show the sound clip">
+          <button type="button" role="radio" data-cwhen="clue">With the clue</button>
+          <button type="button" role="radio" data-cwhen="answer">After the answer is revealed</button>
+        </div>
+      </div>
+      <div id="clipPreview"></div>
+      <p class="media-msg" id="clipMsg" role="status"></p>
+    </div>`;
+  }
+
+  function clipUpdate() {
+    const box = $m("clipField");
+    if (!box) return;
+    box.querySelector("[data-clip-remove]").hidden = !clipDraft;
+    $m("clipWhen").hidden = !clipDraft;
+    if (clipDraft) box.querySelectorAll("[data-cwhen]").forEach(b => b.setAttribute("aria-checked", b.dataset.cwhen === clipDraft.when));
+    const pv = $m("clipPreview");
+    if (!clipDraft) { pv.innerHTML = ""; return; }
+    if (clipDraft.blob) pv.innerHTML = clipHTML(clipDraft, clipDraft.url || (clipDraft.url = URL.createObjectURL(clipDraft.blob)));
+    else pv.innerHTML = clipHTML({ ...clipDraft, when: "clue" });
+    const name = pv.querySelector(".clip");
+    if (name) name.title = clipDraft.name || "";
+  }
+  const clipSay = (text, bad) => { const el = $m("clipMsg"); if (el) { el.textContent = text; el.classList.toggle("bad", !!bad); } };
+
+  async function pickClip(file) {
+    if (!file) return;
+    if (!(file.type === "audio/mpeg" || file.type === "audio/mp3" || /\.mp3$/i.test(file.name))) return clipSay("That file isn't an MP3.", true);
+    if (file.size > MAX_FILE) return clipSay(`That file is ${(file.size / 1048576).toFixed(0)} MB. Pick one under 25 MB.`, true);
+    clipSay("Reading the sound…");
+    try {
+      const { dur, peaks } = await analyse(file);
+      clipDraft = { blob: file, name: file.name, dur, peaks, when: clipDraft ? clipDraft.when : "clue" };
+      clipSay(`${file.name} · ${mmss(dur)}`);
+    } catch (e) { return clipSay("That file couldn't be read as audio. Try another MP3.", true); }
+    clipUpdate();
+  }
+  function removeClip() { clipDraft = null; clipSay(""); clipUpdate(); }
+  function setClipWhen(when) { if (clipDraft) { clipDraft.when = when === "answer" ? "answer" : "clue"; clipUpdate(); } }
+
+  async function commitClip(before) {
+    const b = cleanClip(before);
+    let clip = null;
+    if (clipDraft && clipDraft.blob) {
+      const id = newId();
+      try { await store("readwrite", s => s.put(clipDraft.blob, id)); }
+      catch (e) { return { error: "Couldn't save that MP3 in this browser. It may be out of space." }; }
+      clip = { id, name: clipDraft.name, dur: +clipDraft.dur.toFixed(2), peaks: clipDraft.peaks, when: clipDraft.when };
+    } else if (clipDraft) clip = cleanClip(clipDraft);
+    if (b && !(clip && clip.id === b.id)) forget({ kind: "file", id: b.id });
+    return { clip };
+  }
+  const forgetClip = c => { c = cleanClip(c); if (c) forget({ kind: "file", id: c.id }); };
+
+  return {
+    clean, html, hydrate, fields, update, setKind, setWhen, input, pick, commit, forget, youtube,
+    cleanClip, clipHTML, clipFields, clipUpdate, pickClip, removeClip, setClipWhen, commitClip, forgetClip,
+    toggleClip, stopClips, set onPlaying(fn) { onPlaying = fn; }
+  };
 })();

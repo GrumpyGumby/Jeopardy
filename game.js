@@ -17,7 +17,7 @@ const FINAL = { cat: "", clue: "", answer: "" };
 
 /* Settings */
 const FINAL_SECONDS = 30;     // Final Jeopardy countdown
-const SOUND = { music: 0.6, sfx: 0.8 };  // volumes from 0 to 1; either can also be muted from the header
+const SOUND = { music: 0.6, sfx: 0.8, hover: 1 };  // volumes from 0 to 1 (hover is relative to sfx; 0 turns hover blips off)
 
 /* House rules template: an optional side game on top of the points.
    Turn it into whatever fits the crowd (prizes, forfeits, chores, candy...).
@@ -697,9 +697,41 @@ document.addEventListener("change", e => {
 /* Browsers only allow sound after the first click or key press */
 document.addEventListener("pointerdown", e => {
   Sound.unlock();
+  keyNav = false;
   if (e.target.closest("input, select, textarea")) Sound.sfx("tap");
 }, true);
-document.addEventListener("keydown", () => Sound.unlock(), true);
+document.addEventListener("keydown", e => {
+  Sound.unlock();
+  keyNav = e.key === "Tab" || e.key.startsWith("Arrow");
+}, true);
+
+/* Hover blips: a tiny tick whenever the pointer (or Tab key) lands on something clickable.
+   On the board the blip also says where you are: pitch rises from the top row to the
+   bottom row, and it pans left to right by column. */
+const CLICKABLE = "button, input, select, textarea";
+let hoverSig = null, keyNav = false;
+
+function hoverBlip(el) {
+  if (el.disabled) return;
+  if (el.dataset.k) {
+    const { c, i } = parseKey(el.dataset.k);
+    return Sound.blip(i * 2, (c - 2.5) / 3);
+  }
+  Sound.blip(el.closest("#overlay") ? 5 : el.closest("#scores") ? -3 : 0);
+}
+// Identify a control by what it does, so a redraw under a still pointer doesn't blip again
+const sig = el => el && el.tagName + JSON.stringify(el.dataset) + el.id;
+
+document.addEventListener("pointerover", e => {
+  if (e.pointerType === "touch") return;          // a tap already makes its click sound
+  const el = e.target.closest(CLICKABLE), s = sig(el);
+  if (s === hoverSig) return;
+  hoverSig = s;
+  if (el) hoverBlip(el);
+});
+document.addEventListener("focusin", e => {
+  if (keyNav && e.target.matches(CLICKABLE)) hoverBlip(e.target);
+});
 
 document.addEventListener("keydown", e => {
   if (ov.hidden || closing) return;

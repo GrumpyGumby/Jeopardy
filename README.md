@@ -18,7 +18,7 @@ Use either of these:
 | Setting | What it does |
 |---|---|
 | `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
-| `SOUND` | Music and sound-effect volumes, from 0 to 1 |
+| `SOUND` | Music, sound-effect and hover-blip volumes, from 0 to 1 (`hover: 0` turns hover blips off) |
 | `HOUSE` | Optional house rules on top of the points, such as prizes, forfeits or chores. See below. |
 
 ### House rules
@@ -51,6 +51,8 @@ The music follows each clue through three moods built on the same theme, and cha
 | Final Jeopardy | Slow and grand, with timpani | Playful thinking music for the countdown | Celebration, also used for the standings |
 
 Every click has a sound effect, including a swoosh in and out for clue cards, a twinkle for revealing the answer, a ding for right and a buzzer for wrong, a sting for Daily Doubles, a fanfare for the standings, and a ticking countdown that ends at "Pens down".
+
+Moving the pointer onto anything clickable plays a tiny blip, and so does moving with the Tab key. This helps players with low vision and gives the board a tactile feel. On the board the blip also tells you where you are: its pitch rises from the top row to the bottom row, and it pans from left to right by column. Like all sound, the blips start after the first click or key press, and **Sound FX** turns them off along with the other effects.
 
 ## How it works
 

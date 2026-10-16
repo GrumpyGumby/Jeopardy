@@ -9,21 +9,25 @@ const screen = $("screen"), connLine = $("conn");
 const STORE = "bearcat-jeopardy-phone";
 const params = new URLSearchParams(location.search);
 
-let server = null;
-try { const s = JSON.parse(params.get("srv")); if (s && typeof s.host === "string") server = s; } catch (e) {}
+// Which broker the game is on (from the link); a custom broker address can come along too
+const brokerIndex = Math.max(0, Math.min(BUZZ.brokers.length - 1, parseInt(params.get("b"), 10) || 0));
+const relay = /^wss?:\/\/[^\s"'<>]+$/.test(params.get("relay") || "") ? params.get("relay") : null;
 
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {}
 const persist = () => { try { localStorage.setItem(STORE, JSON.stringify(saved)); } catch (e) {} };
+if (!/^[a-z0-9]{12}$/.test(saved.id || "")) { saved.id = randomId(12); persist(); }
+const myId = saved.id;                               // this phone, so the game knows it after a reload
 
 let room = (params.get("room") || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
-let peer = null, conn = null, retry = null;
+let client = null, connecting = false, retry = null, findTimer = null, beat = null, subscribedRoom = "";
+let linked = false;                                  // the game is on and answering
 let joined = false, ended = false;                   // joined: we've reached this game before; ended: the host turned buzzers off
 let players = [], me = null;                         // me = my player index
 let arm = { id: 0, open: false, locked: [], note: "" };
 let result = null;                                   // the latest buzz-in result for the open round
 let pressed = null;                                  // the round id I buzzed in
-let offset = 0, bestRtt = Infinity, syncTimer = null; // game clock = my clock + offset
+let offset = 0, samples = [], lastPong = 0;          // game clock = my clock + offset
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => (n < 0 ? "−$" : "$") + Math.abs(n).toLocaleString();
@@ -32,61 +36,111 @@ const okPattern = p => /^[a-z]+$/.test(p) ? p : "solid";
 const look = p => `class="pp pl pat-${okPattern(p.pattern)}" style="--pc:${okColor(p.color)}"`;
 const secs = ms => (ms / 1000).toFixed(2);
 const buzz = n => { try { navigator.vibrate && navigator.vibrate(n); } catch (e) {} };
+const base = r => `${BUZZ.topic}/${r || room}`;
 
-/* ---------- Connecting ---------- */
+/* ---------- Connecting ----------
+   Every step has a timeout and a message, so the phone never just sits on "Connecting…" */
 async function connect() {
   clearTimeout(retry);
   ended = false;
   if (!room) return showJoin();
-  setConn("Connecting to game " + room + "…");
-  try { await loadScript(BUZZ.lib); }
-  catch (e) { return setConn("Couldn't load the buzzer. Check your internet connection.", true); }
-  if (!peer || peer.destroyed) {
-    peer = new Peer(peerOptions(server));
-    peer.on("error", err => {
-      if (err.type === "peer-unavailable") {
-        if (joined && !ended) { setConn("Waiting for the game to come back…", true); return again(); }   // e.g. the game page reloaded
-        setConn(`Can't find game ${room}. Check the code on the game screen.`, true); showJoin(true);
-      }
-      else { setConn("Connection trouble. Retrying…", true); again(); }
-    });
-    peer.on("disconnected", () => { if (!peer.destroyed) setTimeout(() => peer && !peer.destroyed && peer.reconnect(), 1500); });
-    await new Promise(res => peer.open ? res() : peer.once("open", res));
+  if (!client) {
+    if (connecting) return;
+    connecting = true;
+    setConn(`Connecting to game ${room}…`);
+    try {
+      ({ client } = await connectRelay(relay ? [relay] : BUZZ.brokers, {
+        first: relay ? 0 : brokerIndex,
+        onTry: (n, of) => { if (n > 1) setConn(`Connecting to game ${room}… (trying server ${n} of ${of})`); }
+      }));
+    } catch (e) {
+      connecting = false;
+      setConn(/load/.test(e.message) ? "Couldn't load the buzzer. Check your internet connection. Retrying…"
+                                     : "Can't reach the buzzer server. Check your internet connection. Retrying…", true);
+      retry = setTimeout(connect, 5000);
+      return;
+    }
+    connecting = false;
+    client.on("message", onRelay);
+    client.on("connect", listen);                          // after a reconnect too
+    client.on("offline", () => { linked = false; setConn("Connection lost. Reconnecting…", true); });
   }
-  conn = peer.connect(BUZZ.prefix + room, { reliable: true });
-  conn.on("open", () => {
-    joined = true;
-    me = null;            // a new connection starts unlinked; the player list that follows re-links our saved player
-    setConn("Connected to game " + room);
-    saved.room = room; persist();
-    bestRtt = Infinity; syncClock(6);
-    clearInterval(syncTimer); syncTimer = setInterval(() => syncClock(1), 10000);
-    send({ t: "hello" });   // ask for the players and buzzer state, in case they arrived before this point
-    render();
-  });
-  conn.on("data", onMessage);
-  conn.on("close", () => { if (ended) return; setConn("Lost the game. Reconnecting…", true); again(); });
-  conn.on("error", () => {});
+  listen();
 }
-function again() { clearTimeout(retry); retry = setTimeout(connect, 2500); }
-function setConn(text, bad) { connLine.textContent = text; connLine.classList.toggle("bad", !!bad); }
-function send(msg) { try { if (conn && conn.open) conn.send(msg); } catch (e) {} }
 
-/* Keep a clock offset to the game, NTP style: keep the sample with the shortest round trip */
+// Listen to this room: messages for everyone, messages for this phone, and whether the game is on
+function listen() {
+  if (!client || !room) return;
+  if (subscribedRoom && subscribedRoom !== room) client.unsubscribe([`${base(subscribedRoom)}/all`, `${base(subscribedRoom)}/p/${myId}`, `${base(subscribedRoom)}/state`]);
+  subscribedRoom = room;
+  setConn(`Looking for game ${room}…`);
+  client.subscribe([`${base()}/all`, `${base()}/p/${myId}`, `${base()}/state`], { qos: 1 });
+  clearTimeout(findTimer);
+  findTimer = setTimeout(() => {                         // the game posts "on" as soon as we listen, if it's running
+    if (linked || ended) return;
+    if (joined) setConn("Waiting for the game to come back…", true);
+    else { showJoin(true); setConn(`Can't find game ${room}. Check the code on the game screen.`, true); }
+  }, 6000);
+}
+
+function onRelay(topic, payload) {
+  if (!topic.startsWith(base() + "/")) return;
+  if (topic.endsWith("/state")) {
+    if (payload.toString() === "on") return hello();
+    linked = false;
+    clearTimeout(findTimer);
+    if (joined) setConn("The game is offline. Waiting for it to come back…", true);
+    else { showJoin(true); setConn(`Game ${room} isn't running right now. Check the code on the game screen.`, true); }
+    return;
+  }
+  const m = parseMsg(payload);
+  if (m) onMessage(m);
+}
+
+// The game is on: introduce ourselves, sync clocks, and keep a heartbeat going
+function hello() {
+  if (ended) return;
+  linked = true; clearTimeout(findTimer);
+  me = null;                                             // the game re-links our saved player from the list it sends
+  samples = []; lastPong = performance.now();
+  send({ t: "hello" });
+  syncClock(10);
+  clearInterval(beat);
+  beat = setInterval(() => {
+    syncClock(2);
+    if (linked && performance.now() - lastPong > 15000) setConn("The game isn't answering. Waiting…", true);
+  }, 4000);
+}
+
+function setConn(text, bad) { connLine.textContent = text; connLine.classList.toggle("bad", !!bad); }
+function send(msg) {
+  if (client && client.connected && room) client.publish(`${base()}/up`, JSON.stringify({ ...msg, from: myId }), { qos: msg.t === "ping" ? 0 : 1 });
+}
+
+/* Keep a clock offset to the game, NTP style: trust the samples with the shortest round trip */
 function syncClock(n) {
-  for (let k = 0; k < n; k++) setTimeout(() => send({ t: "ping", c: performance.now() }), k * 120);
+  for (let k = 0; k < n; k++) setTimeout(() => send({ t: "ping", c: performance.now() }), k * 150);
 }
 
 /* ---------- Messages from the game ---------- */
 function onMessage(m) {
-  if (!m || typeof m !== "object") return;
   if (m.t === "pong") {
     const now = performance.now(), rtt = now - m.c;
-    if (rtt >= 0 && rtt <= bestRtt * 1.5 + 5) { bestRtt = Math.min(bestRtt, rtt); offset = m.h + rtt / 2 - now; }
+    if (!(rtt >= 0 && rtt < 10000) || !Number.isFinite(m.h)) return;
+    lastPong = now;
+    if (!joined) { joined = true; saved.room = room; persist(); }
+    if (connLine.textContent !== "Connected to game " + room) setConn("Connected to game " + room);
+    // the quickest round trips are the least skewed by network delay: average the best three
+    samples.push({ rtt, offset: m.h + rtt / 2 - now });
+    if (samples.length > 20) samples.shift();
+    const best = [...samples].sort((a, b) => a.rtt - b.rtt).slice(0, 3);
+    offset = best.reduce((sum, x) => sum + x.offset, 0) / best.length;
     return;
   }
   if (m.t === "players") {
     players = Array.isArray(m.list) ? m.list : [];
+    // "you are player N" can arrive before the list that has player N in it: remember who we are now
+    if (me !== null && players[me]) { saved.player = me; saved.name = players[me].name; persist(); }
     // rejoin as the same player after a reload, if they're still in the game
     if (me === null && saved.room === room && players[saved.player] && players[saved.player].name === saved.name) send({ t: "claim", player: saved.player });
     return render();
@@ -110,9 +164,8 @@ function onMessage(m) {
     return render();
   }
   if (m.t === "bye") {
-    ended = true; joined = false;
-    clearTimeout(retry); clearInterval(syncTimer);
-    conn && conn.close();
+    ended = true; joined = false; linked = false;
+    clearInterval(beat); clearTimeout(findTimer);
     showJoin(true);
     setConn("The host turned buzzers off. Join again when they're back on.", true);
   }
@@ -120,7 +173,7 @@ function onMessage(m) {
 
 /* ---------- Screens ---------- */
 function render() {
-  if (!conn || !conn.open) return;
+  if (!linked) return;
   if (me === null || !players[me]) return showPick();
   showBuzzer();
 }
@@ -130,7 +183,13 @@ function showJoin(failed) {
     <p class="msg">Enter the 4-letter code shown on the game screen.</p>
     <input id="code" class="code-in" maxlength="4" autocomplete="off" autocapitalize="characters" value="${esc(room)}" aria-label="Game code">
     <button class="btn primary" id="go">Join game</button>`;
-  const go = () => { room = $("code").value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4); if (room.length === 4) { history.replaceState(null, "", "?room=" + room + (server ? "&srv=" + encodeURIComponent(JSON.stringify(server)) : "")); connect(); } };
+  const go = () => {
+    const code = $("code").value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+    if (code.length !== 4) return;
+    room = code; linked = false; joined = false;
+    params.set("room", room); history.replaceState(null, "", "?" + params);
+    connect();
+  };
   $("go").onclick = go;
   $("code").onkeydown = e => { if (e.key === "Enter") go(); };
   if (!failed) setConn("");
@@ -206,7 +265,12 @@ function press() {
 
 /* Keep the screen awake while the buzzer is open */
 async function stayAwake() { try { if (navigator.wakeLock && document.visibilityState === "visible") await navigator.wakeLock.request("screen"); } catch (e) {} }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { stayAwake(); if (!conn || !conn.open) connect(); } });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  stayAwake();
+  if (!client) connect();
+  else if (linked) hello();          // after the phone slept: say hello again and re-sync the clock
+});
 stayAwake();
 
 if (room) connect(); else showJoin();

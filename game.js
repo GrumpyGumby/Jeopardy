@@ -226,10 +226,10 @@ function renderBoard(r) {
     const k = `${r}-${c}-${i}`;
     const [q, a] = clueOf(k);
     const blank = !q.trim() || !a.trim();
-    const media = editMode && Media.clean(S.edits[`m-${k}`]);
+    const media = editMode && Media.clean(S.edits[`m-${k}`]), clip = editMode && Media.cleanClip(S.edits[`a-${k}`]);
     h += `<button class="cell ${S.used[k] ? "used" : ""} ${blank ? "blank" : ""} ${editMode && S.dd.includes(k) ? "dd" : ""}" data-k="${k}"
-            aria-label="${esc(catName(r, c))} for ${v}${S.used[k] ? ", used" : ""}${media ? ", has media" : ""}">${v}${media
-            ? `<span class="mbadge" title="${media.kind === "youtube" ? "YouTube video" : "Picture"}">${media.kind === "youtube" ? "▶" : "🖼"}</span>` : ""}</button>`;
+            aria-label="${esc(catName(r, c))} for ${v}${S.used[k] ? ", used" : ""}${media ? ", has media" : ""}${clip ? ", has a sound clip" : ""}">${v}${media || clip
+            ? `<span class="mbadge">${media ? `<span title="${media.kind === "youtube" ? "YouTube video" : "Picture"}">${media.kind === "youtube" ? "▶" : "🖼"}</span>` : ""}${clip ? `<span title="Sound clip">♪</span>` : ""}</span>` : ""}</button>`;
   }));
   return h + `</div>`;
 }
@@ -254,6 +254,7 @@ function renderFinal() {
         <label>Clue <textarea id="fnQ" rows="3">${esc(F.clue)}</textarea></label>
         <label>Answer <input id="fnA" value="${esc(F.answer)}"></label>
         ${Media.fields(S.edits["m-final"])}
+        ${Media.clipFields(S.edits["a-final"])}
       </div>
       <div class="row"><button class="btn primary" data-act="save-final">Save Final</button></div>
       <p class="hint">${n ? `<strong>${n}</strong>&nbsp;blank${n === 1 ? "" : "s"} left in the game` : "Every clue is filled in."}</p>
@@ -323,7 +324,7 @@ function render() {
   main.innerHTML = view === "r0" ? renderBoard(0)
                  : view === "r1" ? renderBoard(1)
                  : view === "rules" ? renderRules() : renderFinal();
-  if (editMode && view === "final") Media.update();
+  if (editMode && view === "final") { Media.update(); Media.clipUpdate(); }
   updateMusic();
 }
 
@@ -399,7 +400,8 @@ function closeOv(sound = "swooshOut") {
   closing = true;
   stopTimer();
   Buzzers.close();
-  Sound.duck(false);
+  Media.stopClips();
+  Sound.duck(false, "video");
   Sound.sfx(sound);
   scene = null; updateMusic();   // the music turns back as the card shrinks
   const key = sourceTile && sourceTile.dataset.k;
@@ -441,13 +443,14 @@ function clueHTML() {
   const { r, c, i } = parseKey(cur.k);
   const [q, a] = clueOf(cur.k);
   const who = cur.only === null ? S.players.map((_, j) => j) : [cur.only];
-  const media = S.edits[`m-${cur.k}`];
-  return `<div class="card ${Media.clean(media) ? "has-media" : ""}">
+  const media = S.edits[`m-${cur.k}`], clip = S.edits[`a-${cur.k}`];
+  return `<div class="card ${Media.clean(media) || Media.cleanClip(clip) ? "has-media" : ""}">
     <div class="card-top">
       <span class="eyebrow">${esc(catName(r, c))}${cur.only !== null ? " · Daily Double" : ""}</span>
       <span class="val">${fmt(cur.value)}</span>
     </div>
     ${Media.html(media)}
+    ${Media.clipHTML(clip)}
     <p class="clue">${esc(q) || '<span class="muted">No clue yet. Use Edit clues to add one.</span>'}</p>
     <p class="answer" id="ans">${esc(a)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
@@ -642,22 +645,23 @@ function openEditor(k, btn) {
       <label>Clue <textarea id="edQ" rows="3">${esc(q)}</textarea></label>
       <label>Answer <input id="edA" value="${esc(a)}"></label>
       ${Media.fields(S.edits[`m-${k}`])}
+      ${Media.clipFields(S.edits[`a-${k}`])}
     </div>
     <div class="row">
       <button class="btn ghost" data-act="close">Cancel</button>
       <button class="btn primary" data-act="save-edit" data-key="${k}">Save</button>
     </div>
   </div>`, btn);
-  Media.update();
+  Media.update(); Media.clipUpdate();
 }
 
 // Save or clear a clue's media
 function setMedia(key, media) {
   if (media) S.edits[key] = media; else delete S.edits[key];
 }
-function mediaError(text) {
+function mediaError(text, where = "mdMsg") {
   Sound.sfx("wrong");
-  const el = $("mdMsg");
+  const el = $(where);
   if (el) { el.textContent = text; el.classList.add("bad"); el.scrollIntoView({ block: "nearest" }); }
 }
 
@@ -666,14 +670,18 @@ function showMedia() {
   Media.hydrate(ov);
   const card = ov.querySelector(".card");
   const yt = card && card.querySelector(".media.yt");
-  Sound.duck(!!yt && (!yt.classList.contains("later") || card.classList.contains("revealed")));
+  Sound.duck(!!yt && (!yt.classList.contains("later") || card.classList.contains("revealed")), "video");
 }
+Media.onPlaying = on => Sound.duck(on, "clip");
 
 async function saveEdit(k) {
   const { r, c } = parseKey(k);
   const m = await Media.commit(S.edits[`m-${k}`]);
   if (m.error) return mediaError(m.error);
+  const a = await Media.commitClip(S.edits[`a-${k}`]);
+  if (a.error) return mediaError(a.error, "clipMsg");
   setMedia(`m-${k}`, m.media);
+  setMedia(`a-${k}`, a.clip);
   S.edits[k] = [$("edQ").value.trim(), $("edA").value.trim()];
   S.edits[`cat-${r}-${c}`] = $("edCat").value.trim();
   Sound.sfx("save");
@@ -683,6 +691,9 @@ async function saveEdit(k) {
 async function saveFinal() {
   const m = await Media.commit(S.edits["m-final"]);
   if (m.error) return mediaError(m.error);
+  const a = await Media.commitClip(S.edits["a-final"]);
+  if (a.error) return mediaError(a.error, "clipMsg");
+  setMedia("a-final", a.clip);
   S.edits.final = { cat: $("fnCat").value.trim(), clue: $("fnQ").value.trim(), answer: $("fnA").value.trim() };
   setMedia("m-final", m.media);
   Sound.sfx("save");
@@ -776,8 +787,8 @@ function addColumn(r) {
   // clear anything left over at this position from an earlier, wider board
   delete S.edits[`cat-${r}-${c}`];
   ROUNDS[r].values.forEach((_, i) => {
-    Media.forget(S.edits[`m-${r}-${c}-${i}`]);
-    delete S.edits[`${r}-${c}-${i}`]; delete S.edits[`m-${r}-${c}-${i}`]; delete S.used[`${r}-${c}-${i}`];
+    Media.forget(S.edits[`m-${r}-${c}-${i}`]); Media.forgetClip(S.edits[`a-${r}-${c}-${i}`]);
+    delete S.edits[`${r}-${c}-${i}`]; delete S.edits[`m-${r}-${c}-${i}`]; delete S.edits[`a-${r}-${c}-${i}`]; delete S.used[`${r}-${c}-${i}`];
   });
   S.cols[r] = c + 1;
   Sound.sfx("add");
@@ -797,12 +808,14 @@ function deleteColumn(r, c) {
     clues: Array.from({ length: rows }, (_, i) => [...clueOf(key(cc, i))]),
     used: Array.from({ length: rows }, (_, i) => !!S.used[key(cc, i)]),
     media: Array.from({ length: rows }, (_, i) => S.edits[`m-${key(cc, i)}`]),
+    clips: Array.from({ length: rows }, (_, i) => S.edits[`a-${key(cc, i)}`]),
     dd: S.dd.filter(k => { const p = parseKey(k); return p.r === r && p.c === cc; }).map(k => parseKey(k).i)
   }));
-  snap.splice(c, 1)[0].media.forEach(Media.forget);       // the deleted column's uploads go too
+  const gone = snap.splice(c, 1)[0];                      // the deleted column's uploads go too
+  gone.media.forEach(Media.forget); gone.clips.forEach(Media.forgetClip);
   for (let cc = 0; cc < n; cc++) {
     delete S.edits[`cat-${r}-${cc}`];
-    for (let i = 0; i < rows; i++) { delete S.edits[key(cc, i)]; delete S.edits[`m-${key(cc, i)}`]; delete S.used[key(cc, i)]; }
+    for (let i = 0; i < rows; i++) { delete S.edits[key(cc, i)]; delete S.edits[`m-${key(cc, i)}`]; delete S.edits[`a-${key(cc, i)}`]; delete S.used[key(cc, i)]; }
   }
   S.dd = S.dd.filter(k => parseKey(k).r !== r);
   snap.forEach((col, cc) => {
@@ -810,6 +823,7 @@ function deleteColumn(r, c) {
     col.clues.forEach((qa, i) => {
       S.edits[key(cc, i)] = qa;
       if (col.media[i]) S.edits[`m-${key(cc, i)}`] = col.media[i];
+      if (col.clips[i]) S.edits[`a-${key(cc, i)}`] = col.clips[i];
       if (col.used[i]) S.used[key(cc, i)] = true;
     });
     col.dd.forEach(i => S.dd.push(key(cc, i)));
@@ -835,12 +849,13 @@ function newGame() {
 function finalClueHTML() {
   const F = finalData();
   const list = finalists();
-  return `<div class="card ${Media.clean(S.edits["m-final"]) ? "has-media" : ""}">
+  return `<div class="card ${Media.clean(S.edits["m-final"]) || Media.cleanClip(S.edits["a-final"]) ? "has-media" : ""}">
     <div class="card-top">
       <span class="eyebrow">Final Jeopardy · ${esc(F.cat) || "Category to come"}</span>
       <span class="timer" id="timer" role="timer" aria-live="off"></span>
     </div>
     ${Media.html(S.edits["m-final"])}
+    ${Media.clipHTML(S.edits["a-final"])}
     <p class="clue">${esc(F.clue) || '<span class="muted">No Final clue yet. Use Edit clues on the Final tab.</span>'}</p>
     <p class="answer" id="ans">${esc(F.answer)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
@@ -1118,6 +1133,9 @@ document.addEventListener("click", e => {
   if (t.dataset.fj) return judgeFinal(+t.dataset.fj, +t.dataset.d);
   if (t.dataset.player) { Sound.sfx("pop"); return openPlayer(+t.dataset.player); }
   if (t.dataset.ddp) return pickFinder(+t.dataset.ddp);
+  if (t.classList.contains("clip-play")) return Media.toggleClip(t);
+  if (t.dataset.clipRemove !== undefined) { Sound.sfx("remove"); return Media.removeClip(); }
+  if (t.dataset.cwhen) { Sound.sfx("select"); return Media.setClipWhen(t.dataset.cwhen); }
   if (t.dataset.mkind) { Sound.sfx("select"); return Media.setKind(t.dataset.mkind); }
   if (t.dataset.mwhen) { Sound.sfx("select"); return Media.setWhen(t.dataset.mwhen); }
   if (t.dataset.delcol) return deleteColumn(view === "r1" ? 1 : 0, +t.dataset.delcol);
@@ -1188,6 +1206,7 @@ document.addEventListener("change", e => {
     save();
   }
   if (t.id === "mdFile") { Media.pick(t.files[0]); t.value = ""; return Sound.sfx("add"); }
+  if (t.id === "clipFile") { Media.pickClip(t.files[0]); t.value = ""; return Sound.sfx("add"); }
   if (t.matches("input, select") && t.type !== "color") Sound.sfx("tick");
 });
 

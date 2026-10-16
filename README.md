@@ -13,6 +13,7 @@ Use either of these:
 - **In the browser:** click **Edit clues**, then click any tile to set its clue, answer and category. The Final tab becomes an editor too. A red dot marks every tile that's still blank, and the hint line counts the blanks left. Edits are saved to `localStorage`, so run the game from the same browser you prepped it in.
 - **Add or delete categories:** in **Edit clues**, **+ Add category** puts a blank column on the right, and the **×** on a category header deletes that column. Columns to its right move left with their clues, used tiles and Daily Doubles. A deleted Daily Double hides again somewhere else. Each round has its own count, from 1 to 8, and it's saved with the game. Deleting a category that has clues asks first, because it can't be undone.
 - **Pictures, GIFs and YouTube videos:** the clue editor in **Edit clues** has a media section. Choose **Picture or GIF** and paste a link or tap **Upload from this device**, or choose **YouTube** and paste any YouTube link (a start time like `?t=1m30s` is kept). **Show it** picks whether it appears with the clue or only after the answer is revealed. Tiles with media show 🖼 or ▶ in edit mode. The game music fades out while a video is on screen. Final Jeopardy can have media too.
+- **Sound clips:** under the picture and video options, **Upload an MP3** adds a sound clip, and a clue can have one along with a picture. On the clue card it's a pill: the clip's waveform on the left, which fills in gold as it plays (tap it to jump to a spot), and a play button on the right. The game music fades out while it plays. Like pictures, it can show with the clue or only after the answer is revealed. Tiles with a sound clip show ♪ in edit mode.
 - **In code:** fill in `ROUNDS` and `FINAL` at the top of `game.js`. Each clue is `[clue, answer]`, ordered from easiest (row 1) to hardest (row 5).
 
 ## Settings (top of `game.js`)
@@ -98,7 +99,7 @@ Opening a Daily Double throws a burst of confetti up from the bottom of the scre
 Daily Doubles are rare by design: one among the 20 Round 1 tiles, so after 10 picks there's still an even chance nobody has found it. To check where they are, turn on **Edit clues**: a gold **DD** tag marks each one. **Reshuffle Daily Doubles** moves them, never onto a tile that's already been played.
 
 **About media:**
-- Uploaded pictures are saved in this browser (in IndexedDB, which has room for large GIFs), so they're only there on the computer and browser you uploaded them from. Pictures added by link work anywhere, as long as the site allows it.
+- Uploaded pictures and MP3s are saved in this browser (in IndexedDB, which has room for large GIFs), so they're only there on the computer and browser you uploaded them from. Pictures added by link work anywhere, as long as the site allows it.
 - YouTube videos need the game opened from its web address (such as GitHub Pages). YouTube won't play embedded videos in a page opened as a file on your computer. The card has an "Open it on YouTube" link as a backup.
 
 ## How it works

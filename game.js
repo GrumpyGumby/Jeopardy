@@ -6,18 +6,20 @@
    Each clue is [clue, answer], ordered easiest (row 1) to hardest (row 5).
    You can also fill everything in from the browser with "Edit clues".
    ========================================================= */
+const CATEGORIES = 4;         // categories per round (columns on the board)
+
 const blankCat = () => ({ name: "", clues: [["", ""], ["", ""], ["", ""], ["", ""], ["", ""]] });
 
 const ROUNDS = [
-  { name: "Jeopardy",        values: [100, 200, 300, 400, 500],  cats: Array.from({ length: 6 }, blankCat) },
-  { name: "Double Jeopardy", values: [200, 400, 600, 800, 1000], cats: Array.from({ length: 6 }, blankCat) }
+  { name: "Jeopardy",        values: [100, 200, 300, 400, 500],  cats: Array.from({ length: CATEGORIES }, blankCat) },
+  { name: "Double Jeopardy", values: [200, 400, 600, 800, 1000], cats: Array.from({ length: CATEGORIES }, blankCat) }
 ];
 
 const FINAL = { cat: "", clue: "", answer: "" };
 
 /* Settings */
 const FINAL_SECONDS = 30;     // Final Jeopardy countdown
-const DAILY_DOUBLES = [1, 2]; // how many Daily Doubles hide in Jeopardy and in Double Jeopardy (0–6 each)
+const DAILY_DOUBLES = [1, 2]; // how many Daily Doubles hide in Jeopardy and in Double Jeopardy (at most one per category)
 
 /* Starting sound levels, 0–100. Players can change them in the Sound panel (header → Sound),
    and their choice is remembered; "Reset to defaults" there brings these back. */
@@ -83,6 +85,9 @@ function load() {
       const base = fresh();
       const st = { ...base, ...s, final: { ...base.final, ...(s.final || {}) } };
       st.players = st.players.map((p, i) => ({ ...p, ...lookOf(p, i) }));
+      // A save from a board with more columns could hide a Daily Double off the board: pick again
+      if (!Array.isArray(st.dd) || st.dd.some(k => { const { r, c } = parseKey(k); return !ROUNDS[r] || c >= ROUNDS[r].cats.length; }))
+        st.dd = pickDD(st.used);
       return st;
     }
   } catch (e) {}
@@ -96,7 +101,8 @@ function pickDD(used = {}) {
   const out = [];
   DAILY_DOUBLES.slice(0, ROUNDS.length).forEach((count, round) => {
     const open = c => [2, 3, 4].filter(i => !used[`${round}-${c}-${i}`]);
-    shuffle([0, 1, 2, 3, 4, 5].filter(c => open(c).length)).slice(0, clamp(count | 0, 0, 6)).forEach(c => {
+    const cats = ROUNDS[round].cats.map((_, c) => c);
+    shuffle(cats.filter(c => open(c).length)).slice(0, clamp(count | 0, 0, cats.length)).forEach(c => {
       const rows = open(c);
       out.push(`${round}-${c}-${rows[Math.floor(Math.random() * rows.length)]}`);
     });
@@ -193,7 +199,7 @@ function renderBoard(r) {
           <span><b class="dd-key">DD</b> marks this game's Daily Doubles.</span>
           <button class="btn mini" data-act="reshuffle-dd">Reshuffle Daily Doubles</button></p>`;
   }
-  h += `<div class="board ${editMode ? "editing" : ""}">`;
+  h += `<div class="board ${editMode ? "editing" : ""}" style="--cols:${R.cats.length}">`;
   R.cats.forEach((_, c) => h += `<div class="cat">${esc(catName(r, c))}</div>`);
   R.values.forEach((v, i) => R.cats.forEach((_, c) => {
     const k = `${r}-${c}-${i}`;
@@ -933,7 +939,8 @@ function hoverBlip(el) {
   if (el.disabled) return;
   if (el.dataset.k) {
     const { c, i } = parseKey(el.dataset.k);
-    return Sound.blip(i * 2, (c - 2.5) / 3);
+    const mid = (ROUNDS[parseKey(el.dataset.k).r].cats.length - 1) / 2;
+    return Sound.blip(i * 2, mid ? (c - mid) / mid * .85 : 0);
   }
   Sound.blip(el.closest("#overlay") ? 5 : el.closest("#scores") ? -3 : 0);
 }

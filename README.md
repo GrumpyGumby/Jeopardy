@@ -17,6 +17,7 @@ Use either of these:
 
 | Setting | What it does |
 |---|---|
+| `CATEGORIES` | Categories per round, which is the number of columns on the board (default 4) |
 | `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
 | `DAILY_DOUBLES` | How many Daily Doubles hide in each round (default `[1, 2]`) |
 | `SOUND` | Starting volumes, 0–100, for the dials in the Sound panel |
@@ -71,7 +72,7 @@ Click a podium to rename a player, fix their score, or choose their look: one of
 
 ## Daily Doubles
 
-Daily Doubles are rare by design: one among the 30 Round 1 tiles, so after 10 picks there's still a 2 in 3 chance nobody has found it. To check where they are, turn on **Edit clues**: a gold **DD** tag marks each one. **Reshuffle Daily Doubles** moves them, never onto a tile that's already been played.
+Daily Doubles are rare by design: one among the 20 Round 1 tiles, so after 10 picks there's still an even chance nobody has found it. To check where they are, turn on **Edit clues**: a gold **DD** tag marks each one. **Reshuffle Daily Doubles** moves them, never onto a tile that's already been played.
 
 ## How it works
 

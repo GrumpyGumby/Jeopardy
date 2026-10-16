@@ -416,7 +416,11 @@ function onTile(btn) {
   const { r, i } = parseKey(k);
   cur = { k, value: ROUNDS[r].values[i], judged: {}, only: null, pick: null, ddp: clamp(control, 0, S.players.length - 1) };
   scene = "clue"; updateMusic();
-  if (S.dd.includes(k)) { Sound.sfx("dd"); return openOv(ddHTML(), btn); }
+  if (S.dd.includes(k)) {
+    Sound.sfx("dd");
+    setTimeout(confetti, 450);   // thrown on the sting's big brass hit
+    return openOv(ddHTML(), btn);
+  }
   Sound.sfx("swooshIn");
   openOv(clueHTML(), btn);
 }
@@ -485,6 +489,68 @@ function markUsed() {
 /* =========================================================
    Daily Double
    ========================================================= */
+
+/* Confetti: thrown up from the bottom edge, then it catches the air and flutters
+   down off screen. Drawn on a throwaway canvas above everything; skipped for
+   anyone who has asked their device for reduced motion. */
+function confetti() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const cv = document.createElement("canvas");
+  cv.className = "confetti"; cv.setAttribute("aria-hidden", "true");
+  document.body.appendChild(cv);
+  const g = cv.getContext("2d"), dpr = Math.min(devicePixelRatio || 1, 2);
+  let W = 0, H = 0;
+  const size = () => { W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  size(); addEventListener("resize", size);
+
+  const colors = ["#f2c14e", "#f2c14e", "#f4f1e8", ...S.players.map((p, i) => lookOf(p, i).color), ...COLORS.map(c => c[1])];
+  const gravity = H * 1.9;                                    // px/s², so the throw scales with the screen
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const bits = Array.from({ length: Math.round(clamp(W / 9, 90, 170)) }, () => {
+    const peak = H * rnd(.45, .92);                          // how high this piece is thrown
+    const speed = Math.sqrt(2 * gravity * peak) * 1.2;       // a little extra to beat the air drag
+    const angle = rnd(-.35, .35);                            // mostly straight up, fanned out
+    return {
+      x: rnd(.04, .96) * W, y: H + rnd(5, 30),
+      vx: Math.sin(angle) * speed, vy: -Math.cos(angle) * speed,
+      w: rnd(7, 12), h: rnd(10, 18), round: Math.random() < .2,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rot: rnd(0, 6.28), spin: rnd(-9, 9),                   // turning in the plane
+      flip: rnd(0, 6.28), flipRate: rnd(6, 14),              // tumbling end over end
+      sway: rnd(.6, 1.6), swayAmp: rnd(25, 70), phase: rnd(0, 6.28),
+      delay: rnd(0, .12)                                     // not everything leaves the hand at once
+    };
+  });
+
+  let last = performance.now(), age = 0;
+  const frame = now => {
+    const dt = Math.min(.033, (now - last) / 1000); last = now; age += dt;
+    g.clearRect(0, 0, W, H);
+    let alive = 0;
+    for (const b of bits) {
+      if (age < b.delay) { alive++; continue; }
+      const falling = b.vy > 0;
+      const drag = falling ? 6.5 : .35;                      // paper rises fast, then floats down
+      b.vy += gravity * dt;
+      b.vx -= b.vx * drag * dt; b.vy -= b.vy * drag * dt;
+      b.x += (b.vx + (falling ? Math.sin(age * b.sway * 3 + b.phase) * b.swayAmp : 0)) * dt;
+      b.y += b.vy * dt;
+      b.rot += b.spin * dt; b.flip += b.flipRate * dt;
+      if (b.y > H + 40 && falling) continue;                 // gone off the bottom
+      alive++;
+      g.save();
+      g.translate(b.x, b.y); g.rotate(b.rot);
+      g.scale(1, Math.cos(b.flip));                          // the flat side turning toward and away from us
+      g.fillStyle = b.color;
+      if (b.round) { g.beginPath(); g.arc(0, 0, b.w / 2, 0, 6.29); g.fill(); }
+      else g.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      g.restore();
+    }
+    if (alive && age < 8) requestAnimationFrame(frame);
+    else { removeEventListener("resize", size); cv.remove(); }
+  };
+  requestAnimationFrame(frame);
+}
 function ddMax(j) {
   const { r } = parseKey(cur.k);
   return Math.max(S.players[j].score, Math.max(...ROUNDS[r].values));

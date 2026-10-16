@@ -6,7 +6,8 @@
    Each clue is [clue, answer], ordered easiest (row 1) to hardest (row 5).
    You can also fill everything in from the browser with "Edit clues".
    ========================================================= */
-const CATEGORIES = 4;         // categories per round (columns on the board)
+const CATEGORIES = 4;         // categories per round on a new board; add or delete them in Edit clues
+const MAX_CATEGORIES = 8;     // the most columns a round can have
 
 const blankCat = () => ({ name: "", clues: [["", ""], ["", ""], ["", ""], ["", ""], ["", ""]] });
 
@@ -73,7 +74,8 @@ function fresh() {
   return {
     players: ["Player 1", "Player 2", "Player 3", "Player 4"].map((name, i) => ({ name, score: 0, ...defaultLook(i) })),
     used: {},        // { "0-2-3": true }
-    dd: pickDD(),    // Daily Double keys
+    cols: ROUNDS.map(() => CATEGORIES),           // columns in each round
+    dd: pickDD({}, ROUNDS.map(() => CATEGORIES)), // Daily Double keys
     edits: {},       // custom clues ("0-2-3": [q, a]), category names ("cat-0-2"), final
     final: { wagers: {}, judged: {} }
   };
@@ -85,9 +87,13 @@ function load() {
       const base = fresh();
       const st = { ...base, ...s, final: { ...base.final, ...(s.final || {}) } };
       st.players = st.players.map((p, i) => ({ ...p, ...lookOf(p, i) }));
+      st.cols = ROUNDS.map((_, r) => {
+        const n = Array.isArray(s.cols) ? Math.round(s.cols[r]) : NaN;
+        return n >= 1 && n <= MAX_CATEGORIES ? n : CATEGORIES;
+      });
       // A save from a board with more columns could hide a Daily Double off the board: pick again
-      if (!Array.isArray(st.dd) || st.dd.some(k => { const { r, c } = parseKey(k); return !ROUNDS[r] || c >= ROUNDS[r].cats.length; }))
-        st.dd = pickDD(st.used);
+      if (!Array.isArray(st.dd) || st.dd.some(k => { const { r, c } = parseKey(k); return !ROUNDS[r] || c >= st.cols[r]; }))
+        st.dd = pickDD(st.used, st.cols);
       return st;
     }
   } catch (e) {}
@@ -97,17 +103,25 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e
 
 /* Daily Doubles: DAILY_DOUBLES per round, in different categories, rows 3–5 only,
    never on a tile that has already been played */
-function pickDD(used = {}) {
-  const out = [];
-  DAILY_DOUBLES.slice(0, ROUNDS.length).forEach((count, round) => {
-    const open = c => [2, 3, 4].filter(i => !used[`${round}-${c}-${i}`]);
-    const cats = ROUNDS[round].cats.map((_, c) => c);
-    shuffle(cats.filter(c => open(c).length)).slice(0, clamp(count | 0, 0, cats.length)).forEach(c => {
-      const rows = open(c);
-      out.push(`${round}-${c}-${rows[Math.floor(Math.random() * rows.length)]}`);
-    });
+function pickDD(used = {}, cols = S.cols) {
+  return ROUNDS.flatMap((_, r) => pickRoundDD(r, DAILY_DOUBLES[r] | 0, used, cols[r]));
+}
+// `count` Daily Doubles for round r, skipping the categories listed in `skip`
+function pickRoundDD(r, count, used, ncol, skip = []) {
+  const open = c => [2, 3, 4].filter(i => !used[`${r}-${c}-${i}`]);
+  const cats = Array.from({ length: ncol }, (_, c) => c).filter(c => !skip.includes(c) && open(c).length);
+  return shuffle(cats).slice(0, Math.max(0, count)).map(c => {
+    const rows = open(c);
+    return `${r}-${c}-${rows[Math.floor(Math.random() * rows.length)]}`;
   });
-  return out;
+}
+// After a column is deleted, hide new Daily Doubles to make up the round's count
+function topUpDD() {
+  ROUNDS.forEach((_, r) => {
+    const have = S.dd.filter(k => parseKey(k).r === r);
+    const need = Math.min(DAILY_DOUBLES[r] | 0, S.cols[r]) - have.length;
+    if (need > 0) S.dd.push(...pickRoundDD(r, need, S.used, S.cols[r], have.map(k => parseKey(k).c)));
+  });
 }
 
 /* Player looks */
@@ -151,20 +165,22 @@ function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
 function house(text, n) { return String(text || "").trim().replace(/\{n\}/g, n); }
 function parseKey(k) { const [r, c, i] = k.split("-").map(Number); return { r, c, i }; }
 
-function rawCatName(r, c) { return S.edits[`cat-${r}-${c}`] ?? ROUNDS[r].cats[c].name; }
+// Clues written in ROUNDS come first; columns beyond them start blank
+const codeCat = (r, c) => ROUNDS[r].cats[c] || blankCat();
+function rawCatName(r, c) { return S.edits[`cat-${r}-${c}`] ?? codeCat(r, c).name; }
 function catName(r, c) { return rawCatName(r, c) || `Category ${c + 1}`; }
 function clueOf(k) {
   const { r, c, i } = parseKey(k);
-  return S.edits[k] || ROUNDS[r].cats[c].clues[i];
+  return S.edits[k] || codeCat(r, c).clues[i] || ["", ""];
 }
 function finalData() { return { ...FINAL, ...(S.edits.final || {}) }; }
 
 function blanks() {
   let n = 0;
-  ROUNDS.forEach((R, r) => R.cats.forEach((C, c) => {
+  ROUNDS.forEach((R, r) => { for (let c = 0; c < S.cols[r]; c++) {
     if (!rawCatName(r, c).trim()) n++;
-    C.clues.forEach((_, i) => { const [q, a] = clueOf(`${r}-${c}-${i}`); if (!q.trim() || !a.trim()) n++; });
-  }));
+    R.values.forEach((_, i) => { const [q, a] = clueOf(`${r}-${c}-${i}`); if (!q.trim() || !a.trim()) n++; });
+  } });
   const F = finalData();
   ["cat", "clue", "answer"].forEach(f => { if (!String(F[f]).trim()) n++; });
   return n;
@@ -197,11 +213,15 @@ function renderBoard(r) {
     h += `<p class="hint"><span>Edit mode: click any tile to change its clue, answer and category.</span>
           <span>${n ? `<strong>${n}</strong> blank${n === 1 ? "" : "s"} left in the game` : "<strong>Every clue is filled in.</strong>"}</span>
           <span><b class="dd-key">DD</b> marks this game's Daily Doubles.</span>
-          <button class="btn mini" data-act="reshuffle-dd">Reshuffle Daily Doubles</button></p>`;
+          <button class="btn mini" data-act="reshuffle-dd">Reshuffle Daily Doubles</button>
+          <button class="btn mini" data-act="add-col" ${S.cols[r] >= MAX_CATEGORIES ? "disabled" : ""}>+ Add category</button>
+          <span>${S.cols[r]} of ${MAX_CATEGORIES} categories · × on a category deletes it</span></p>`;
   }
-  h += `<div class="board ${editMode ? "editing" : ""}" style="--cols:${R.cats.length}">`;
-  R.cats.forEach((_, c) => h += `<div class="cat">${esc(catName(r, c))}</div>`);
-  R.values.forEach((v, i) => R.cats.forEach((_, c) => {
+  const cols = Array.from({ length: S.cols[r] }, (_, c) => c);
+  h += `<div class="board ${editMode ? "editing" : ""}" style="--cols:${cols.length}">`;
+  cols.forEach(c => h += `<div class="cat">${esc(catName(r, c))}${editMode && cols.length > 1
+    ? `<button class="col-del" data-delcol="${c}" title="Delete this category" aria-label="Delete ${esc(catName(r, c))}">×</button>` : ""}</div>`);
+  R.values.forEach((v, i) => cols.forEach(c => {
     const k = `${r}-${c}-${i}`;
     const [q, a] = clueOf(k);
     const blank = !q.trim() || !a.trim();
@@ -285,7 +305,7 @@ function renderRules() {
     <ul>
       <li>Click a podium to rename a player, fix a score, or pick their color and pattern. <b>+ Player</b> adds one.</li>
       <li><b>Sound</b> in the header has a volume dial for everything, plus music speed and echo. Press <b>M</b> to mute or unmute.</li>
-      <li><b>Edit clues</b> lets you change any clue, answer or category, and the Final.</li>
+      <li><b>Edit clues</b> lets you change any clue, answer or category, and the Final. It can also add a category, or delete one with the × on its header.</li>
       <li><b>New game</b> resets scores, used tiles and Daily Doubles but keeps names and clues.</li>
       <li>Everything saves in this browser, so a refresh won't lose the game.</li>
     </ul>
@@ -633,9 +653,55 @@ function addPlayer() {
   if (view === "final") render();
 }
 
+/* =========================================================
+   Columns: add a blank category, or delete one and shift the rest left
+   ========================================================= */
+function addColumn(r) {
+  const c = S.cols[r];
+  if (c >= MAX_CATEGORIES) return;
+  // clear anything left over at this position from an earlier, wider board
+  delete S.edits[`cat-${r}-${c}`];
+  ROUNDS[r].values.forEach((_, i) => { delete S.edits[`${r}-${c}-${i}`]; delete S.used[`${r}-${c}-${i}`]; });
+  S.cols[r] = c + 1;
+  Sound.sfx("add");
+  save(); render();
+}
+
+function deleteColumn(r, c) {
+  const n = S.cols[r], rows = ROUNDS[r].values.length;
+  if (n <= 1 || c < 0 || c >= n) return;
+  const key = (cc, i) => `${r}-${cc}-${i}`;
+  const filled = rawCatName(r, c).trim() || ROUNDS[r].values.some((_, i) => clueOf(key(c, i)).some(x => x.trim()));
+  if (filled && !confirm(`Delete "${catName(r, c)}" and all of its clues? This can't be undone.`)) return;
+
+  // Take a snapshot of every column, drop one, then write them back in their new places
+  const snap = Array.from({ length: n }, (_, cc) => ({
+    name: rawCatName(r, cc),
+    clues: Array.from({ length: rows }, (_, i) => [...clueOf(key(cc, i))]),
+    used: Array.from({ length: rows }, (_, i) => !!S.used[key(cc, i)]),
+    dd: S.dd.filter(k => { const p = parseKey(k); return p.r === r && p.c === cc; }).map(k => parseKey(k).i)
+  }));
+  snap.splice(c, 1);
+  for (let cc = 0; cc < n; cc++) {
+    delete S.edits[`cat-${r}-${cc}`];
+    for (let i = 0; i < rows; i++) { delete S.edits[key(cc, i)]; delete S.used[key(cc, i)]; }
+  }
+  S.dd = S.dd.filter(k => parseKey(k).r !== r);
+  snap.forEach((col, cc) => {
+    S.edits[`cat-${r}-${cc}`] = col.name;
+    col.clues.forEach((qa, i) => { S.edits[key(cc, i)] = qa; if (col.used[i]) S.used[key(cc, i)] = true; });
+    col.dd.forEach(i => S.dd.push(key(cc, i)));
+  });
+  S.cols[r] = n - 1;
+  topUpDD();                     // a deleted Daily Double hides somewhere else
+  Sound.sfx("remove");
+  save(); render();
+}
+
 function newGame() {
   if (!confirm("Start a new game? Scores, used tiles and Daily Doubles reset. Names and clues stay.")) return;
-  S = { ...fresh(), players: S.players.map(p => ({ ...p, score: 0 })), edits: S.edits };
+  S = { ...fresh(), players: S.players.map(p => ({ ...p, score: 0 })), edits: S.edits, cols: S.cols };
+  S.dd = pickDD();
   view = "r0";
   Sound.sfx("newGame");
   save(); render();
@@ -830,6 +896,7 @@ document.addEventListener("click", e => {
   if (t.dataset.fj) return judgeFinal(+t.dataset.fj, +t.dataset.d);
   if (t.dataset.player) { Sound.sfx("pop"); return openPlayer(+t.dataset.player); }
   if (t.dataset.ddp) return pickFinder(+t.dataset.ddp);
+  if (t.dataset.delcol) return deleteColumn(view === "r1" ? 1 : 0, +t.dataset.delcol);
   if (t.dataset.color) { Sound.sfx("select"); return setLook({ color: t.dataset.color }); }
   if (t.dataset.pattern) { Sound.sfx("select"); return setLook({ pattern: t.dataset.pattern }); }
   if (t.dataset.snd) return toggleSnd(t);
@@ -871,6 +938,7 @@ document.addEventListener("click", e => {
     case "standings":     return showStandings();
     case "sound":         Sound.sfx("pop"); return openOv(soundHTML());
     case "sound-reset":   Sound.reset(); Sound.sfx("save"); swapOv(soundHTML()); return renderNav();
+    case "add-col":       return addColumn(view === "r1" ? 1 : 0);
     case "reshuffle-dd":  S.dd = pickDD(S.used); save(); Sound.sfx("shuffle"); return render();
     default:              Sound.sfx("click");
   }
@@ -939,7 +1007,7 @@ function hoverBlip(el) {
   if (el.disabled) return;
   if (el.dataset.k) {
     const { c, i } = parseKey(el.dataset.k);
-    const mid = (ROUNDS[parseKey(el.dataset.k).r].cats.length - 1) / 2;
+    const mid = (S.cols[parseKey(el.dataset.k).r] - 1) / 2;
     return Sound.blip(i * 2, mid ? (c - mid) / mid * .85 : 0);
   }
   Sound.blip(el.closest("#overlay") ? 5 : el.closest("#scores") ? -3 : 0);

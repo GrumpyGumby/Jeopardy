@@ -318,6 +318,16 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 }
 .board.editing .cell.dd::before { content: "DD"; position: absolute; top: 6px; left: 6px; }
 .btn.mini { padding: 4px 10px; font-size: 12px; }
+.btn:disabled { opacity: .4; cursor: default; }
+
+/* Edit mode: delete a category */
+.cat { position: relative; }
+.board.editing .cat { padding-top: 32px; }
+.col-del {
+  position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%; padding: 0;
+  border: 2px solid var(--bad); background: var(--edge); color: var(--bad); font: 600 16px/1 var(--f-data);
+}
+.col-del:hover, .col-del:focus-visible { background: var(--bad); color: var(--edge); }
 
 /* ---------- Sound panel: volume dials ---------- */
 .sound-card { gap: 18px; }

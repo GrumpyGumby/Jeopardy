@@ -11,13 +11,15 @@ Open `index.html` in a browser. To host it, upload the four files (`index.html`,
 Use either of these:
 
 - **In the browser:** click **Edit clues**, then click any tile to set its clue, answer and category. The Final tab becomes an editor too. A red dot marks every tile that's still blank, and the hint line counts the blanks left. Edits are saved to `localStorage`, so run the game from the same browser you prepped it in.
+- **Add or delete categories:** in **Edit clues**, **+ Add category** puts a blank column on the right, and the **×** on a category header deletes that column. Columns to its right move left with their clues, used tiles and Daily Doubles. A deleted Daily Double hides again somewhere else. Each round has its own count, from 1 to 8, and it's saved with the game. Deleting a category that has clues asks first, because it can't be undone.
 - **In code:** fill in `ROUNDS` and `FINAL` at the top of `game.js`. Each clue is `[clue, answer]`, ordered from easiest (row 1) to hardest (row 5).
 
 ## Settings (top of `game.js`)
 
 | Setting | What it does |
 |---|---|
-| `CATEGORIES` | Categories per round, which is the number of columns on the board (default 4) |
+| `CATEGORIES` | Categories per round on a new board (default 4). After that, add or delete them in **Edit clues** |
+| `MAX_CATEGORIES` | The most categories a round can have (default 8) |
 | `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
 | `DAILY_DOUBLES` | How many Daily Doubles hide in each round (default `[1, 2]`) |
 | `SOUND` | Starting volumes, 0–100, for the dials in the Sound panel |

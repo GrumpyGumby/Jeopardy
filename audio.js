@@ -507,6 +507,24 @@ const Sound = (() => {
     }
   };
 
+  /* Hover blip: a tiny tick, pitched up by `pitch` semitones and panned from -1 (left) to 1 (right) */
+  let lastBlip = 0;
+  const panners = {};
+  function blip(pitch = 0, pan = 0) {
+    const lvl = typeof SOUND === "object" && SOUND.hover != null ? SOUND.hover : 1;
+    if (!ctx || !sfxOn || lvl <= 0 || ctx.state !== "running") return;
+    const now = ctx.currentTime;
+    if (now - lastBlip < .03) return;                  // sweeping fast across tiles stays a light patter
+    lastBlip = now;
+    let dest = sfxBus;
+    if (pan && ctx.createStereoPanner) {
+      const key = pan.toFixed(2);
+      if (!panners[key]) { panners[key] = ctx.createStereoPanner(); panners[key].pan.value = pan; panners[key].connect(sfxBus); }
+      dest = panners[key];
+    }
+    voice({ type: "sine", freq: hz(84 + pitch), t: now + .005, dur: .004, gain: .05 * lvl, attack: .002, decay: .025, sustain: .01, release: .015, dest });
+  }
+
   function sfx(name) {
     if (!ctx || !sfxOn || !S[name]) return;
     S[name](ctx.currentTime + .01, sfxBus);
@@ -527,7 +545,7 @@ const Sound = (() => {
   }
 
   return {
-    unlock, music, sfx, toggleMusic, toggleSfx,
+    unlock, music, sfx, blip, toggleMusic, toggleSfx,
     get musicOn() { return musicOn; }, get sfxOn() { return sfxOn; },
     get mood() { return mood && Object.keys(MOODS).find(k => MOODS[k] === mood); }   // for testing
   };

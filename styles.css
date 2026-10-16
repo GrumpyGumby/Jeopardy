@@ -46,6 +46,8 @@ nav { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .tab.on { background: var(--cell); color: var(--gold); border-color: var(--cell-hi); }
 .nav-sp { width: 10px; }
 .tab.tool.on { background: var(--gold); color: var(--edge); border-color: var(--gold); }
+.tab.snd.on { background: var(--cell); color: var(--gold); border-color: var(--cell-hi); }
+.tab.snd:not(.on) { text-decoration: line-through; }
 
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .board-wrap { overflow-x: auto; }

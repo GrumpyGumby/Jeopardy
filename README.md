@@ -4,7 +4,7 @@ A reusable Jeopardy template you can use for any occasion, with zooming clue car
 
 ## Run it
 
-Open `index.html` in a browser. To host it, upload the three files (`index.html`, `styles.css`, `game.js`) to any static host, such as GitHub Pages.
+Open `index.html` in a browser. To host it, upload the four files (`index.html`, `styles.css`, `game.js`, `audio.js`) to any static host, such as GitHub Pages.
 
 ## Fill in your clues
 
@@ -18,6 +18,7 @@ Use either of these:
 | Setting | What it does |
 |---|---|
 | `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
+| `SOUND` | Music and sound-effect volumes, from 0 to 1 |
 | `HOUSE` | Optional house rules on top of the points, such as prizes, forfeits or chores. See below. |
 
 ### House rules
@@ -36,6 +37,20 @@ Use either of these:
 For example, a classroom version might use `miss: "Miss: {n} jumping jacks"` and `winner: "Picks Friday's game"`.
 
 The animation speed lives in the `--t-open` and `--t-fade` variables in `styles.css`.
+
+## Music and sound
+
+All music and sound effects are original and generated live in the browser by `audio.js` using the Web Audio API, so there are no audio files to host. Browsers only allow sound after someone interacts with the page, so the music starts on the first click or key press. **♪ Music** and **Sound FX** in the header mute either one, and that choice is remembered.
+
+The music follows each clue through three moods built on the same theme, and changes on the beat instead of cutting:
+
+| Section | Board | Clue open | Answer revealed |
+|---|---|---|---|
+| Jeopardy | Relaxed, bouncy theme | Minor key, faster pulse, ticking clock | Bright, rising "I did it!" version |
+| Double Jeopardy | Up a key, faster, brass and full drums | Driving bass, toms, building snare | Biggest version, with crashes and fills |
+| Final Jeopardy | Slow and grand, with timpani | Playful thinking music for the countdown | Celebration, also used for the standings |
+
+Every click has a sound effect, including a swoosh in and out for clue cards, a twinkle for revealing the answer, a ding for right and a buzzer for wrong, a sting for Daily Doubles, a fanfare for the standings, and a ticking countdown that ends at "Pens down".
 
 ## How it works
 

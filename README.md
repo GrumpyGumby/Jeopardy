@@ -74,6 +74,8 @@ Click a podium to rename a player, fix their score, or choose their look: one of
 
 ## Daily Doubles
 
+Opening a Daily Double throws a burst of confetti up from the bottom of the screen, which then floats back down and off screen. It's skipped for anyone whose device is set to reduce motion.
+
 Daily Doubles are rare by design: one among the 20 Round 1 tiles, so after 10 picks there's still an even chance nobody has found it. To check where they are, turn on **Edit clues**: a gold **DD** tag marks each one. **Reshuffle Daily Doubles** moves them, never onto a tile that's already been played.
 
 ## How it works

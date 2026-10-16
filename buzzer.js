@@ -3,21 +3,27 @@
 /* =========================================================
    Phone buzzers: players buzz in from their own phones.
 
-   The game page and each phone talk directly over WebRTC (PeerJS).
-   A free public PeerJS server only introduces them, and PeerJS relays
-   the connection when a network blocks direct links.
+   The game page and the phones pass small messages through a free public
+   MQTT broker (a message relay), over an ordinary secure WebSocket like a
+   chat app uses. Nothing has to connect device to device, so it works on
+   home Wi-Fi, cellular data, and networks that block direct links.
+   Messages on a public broker aren't private: don't put anything secret in the game.
+
    Loaded by the game (the host) and by buzz.html (the phones).
    ========================================================= */
 const BUZZ = {
   // Where phones open the buzzer page when the game is opened as a file on this computer.
   // (When the game is served from a web address, phones use buzz.html next to it instead.)
   page: "https://grumpygumby.github.io/Jeopardy/buzz.html",
-  // The PeerJS server that introduces phones to the game. null = the free public PeerJS cloud.
-  // To use your own: { host: "peer.example.com", port: 443, path: "/", secure: true }
-  server: null,
-  grace: 200,              // ms to wait after the first buzz arrives, in case an earlier press is still on its way
-  prefix: "bearcat-jeopardy-",
-  lib: "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js",
+  // Public MQTT brokers to try, in order. The game tells the phones which one it's using.
+  brokers: [
+    "wss://broker.emqx.io:8084/mqtt",
+    "wss://test.mosquitto.org:8081/mqtt",
+    "wss://broker.hivemq.com:8884/mqtt"
+  ],
+  topic: "bearcat-jeopardy/v1",
+  grace: 400,              // ms to wait after the first buzz arrives, in case an earlier press is still on its way
+  lib: "https://cdn.jsdelivr.net/npm/mqtt@5.10.4/dist/mqtt.min.js",
   qrLib: "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
 };
 
@@ -32,9 +38,35 @@ function loadScript(src) {
   }));
 }
 
-function peerOptions(server) {
-  const s = server || BUZZ.server;
-  return s ? { host: String(s.host), port: +s.port || 443, path: String(s.path || "/"), secure: s.secure !== false } : {};
+const randomId = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+
+/* Connect to the first broker that answers. Tries `first` (an index into urls) before the rest.
+   Resolves { client, index }; rejects if none of them answer. */
+async function connectRelay(urls, { will, first = 0, onTry } = {}) {
+  await loadScript(BUZZ.lib);
+  const order = urls.map((u, i) => i).sort((a, b) => (a === first ? -1 : b === first ? 1 : a - b));
+  for (const [n, index] of order.entries()) {
+    if (onTry) onTry(n + 1, order.length);
+    try { return { client: await tryBroker(urls[index], will), index }; } catch (e) {}
+  }
+  throw new Error("No broker answered");
+}
+function tryBroker(url, will) {
+  return new Promise((resolve, reject) => {
+    const client = mqtt.connect(url, {
+      clientId: "bj_" + randomId(12), keepalive: 20, connectTimeout: 6000, reconnectPeriod: 2000,
+      clean: true, protocolVersion: 4, will
+    });
+    const fail = () => { clearTimeout(timer); client.end(true); reject(new Error("Couldn't reach " + url)); };
+    const timer = setTimeout(fail, 7000);
+    client.once("connect", () => { clearTimeout(timer); client.removeListener("error", fail); resolve(client); });
+    client.once("error", fail);
+  });
+}
+// Parse a message from the relay; anything odd is dropped
+function parseMsg(payload) {
+  if (!payload || payload.length > 4000) return null;
+  try { const m = JSON.parse(payload.toString()); return m && typeof m === "object" ? m : null; } catch (e) { return null; }
 }
 
 /* =========================================================
@@ -46,114 +78,123 @@ const Buzzers = (() => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {}
 
-  let peer = null, status = "off", error = "", room = /^[A-Z]{4}$/.test(saved.room) ? saved.room : "", hooks = {};
-  let retry = null;
-  const phones = new Map();       // connection id → { conn, player: index or null }
+  let client = null, broker = 0, status = "off", error = "", hooks = {}, retry = null, sweep = null;
+  let room = /^[A-Z]{4}$/.test(saved.room) ? saved.room : "";
+  const phones = new Map();       // phone id → { player: index or null, seen: time of its last message }
   let round = { id: 0, open: false, openedAt: 0, entries: [], winner: null, locked: [], note: "", timer: null };
 
   const persist = () => { try { localStorage.setItem(STORE, JSON.stringify({ on: status !== "off", room })); } catch (e) {} };
   const changed = () => hooks.changed && hooks.changed();
-  const send = (conn, msg) => { try { if (conn.open) conn.send(msg); } catch (e) {} };
-  const broadcast = msg => phones.forEach(p => send(p.conn, msg));
+  const base = () => `${BUZZ.topic}/${room}`;
+  const publish = (topic, msg, opts = { qos: 1 }) => { if (client && client.connected) client.publish(topic, JSON.stringify(msg), opts); };
+  const send = (id, msg) => publish(`${base()}/p/${id}`, msg, msg.t === "pong" ? { qos: 0 } : { qos: 1 });
+  const broadcast = msg => { if (phones.size) publish(`${base()}/all`, msg); };
   const makeCode = () => Array.from({ length: 4 }, () => CODE_LETTERS[Math.floor(Math.random() * CODE_LETTERS.length)]).join("");
 
   function init(h) { hooks = h; if (saved.on) start(); }
 
   async function start() {
-    if (peer) return;
+    if (client) return;
     clearTimeout(retry);
     status = "connecting"; error = ""; persist(); changed();
-    try { await loadScript(BUZZ.lib); }
-    catch (e) { return trouble("Couldn't load the buzzer library. Phone buzzers need an internet connection."); }
-    if (status === "off") return;
     if (!room) room = makeCode();
-    peer = new Peer(BUZZ.prefix + room, peerOptions());
-    peer.on("open", () => { status = "ready"; error = ""; persist(); changed(); });
-    peer.on("connection", attach);
-    peer.on("disconnected", () => {          // lost the introduction server; phones already linked keep working
-      if (status === "off" || !peer || peer.destroyed) return;
-      status = "connecting"; changed();
-      retry = setTimeout(() => { if (peer && !peer.destroyed) peer.reconnect(); }, 2000);
-    });
-    peer.on("error", err => {
-      if (err.type === "unavailable-id") {   // another game already has this code
-        destroyPeer(); room = makeCode(); return start();
-      }
-      if (err.type === "peer-unavailable") return;
-      trouble(status === "ready" ? "Lost the buzzer server. Retrying…" : "Can't reach the buzzer server. Retrying…");
-    });
+    const stateTopic = () => `${base()}/state`;
+    let c;
+    try {
+      ({ client: c, index: broker } = await connectRelay(BUZZ.brokers, { will: { topic: stateTopic(), payload: "off", qos: 1, retain: true } }));
+    } catch (e) {
+      if (status === "off") return;
+      error = /load/.test(e.message) ? "Couldn't load the buzzer library. Phone buzzers need an internet connection."
+                                     : "Can't reach the buzzer server. Retrying…";
+      changed();
+      retry = setTimeout(start, 5000);
+      return;
+    }
+    if (status === "off") { c.end(true); return; }
+    client = c;
+    const online = () => {
+      client.subscribe(`${base()}/up`, { qos: 1 });
+      client.publish(stateTopic(), "on", { qos: 1, retain: true });
+      status = "ready"; error = ""; persist(); changed();
+      broadcast(playersMsg()); broadcast(armMsg());
+    };
+    client.on("connect", online);                    // after a reconnect too
+    client.on("offline", () => { if (status !== "off") { status = "connecting"; error = "Reconnecting to the buzzer server…"; changed(); } });
+    client.on("message", (topic, payload) => { const m = parseMsg(payload); if (m) onMessage(m); });
+    online();
+    clearInterval(sweep);
+    sweep = setInterval(() => {                      // forget phones that have gone quiet
+      const now = Date.now(); let gone = false;
+      phones.forEach((p, id) => { if (now - p.seen > 20000) { phones.delete(id); gone = true; } });
+      if (gone) changed();
+    }, 5000);
   }
 
-  function trouble(msg) {
-    error = msg;
-    if (status === "off") return;
-    status = "connecting";
-    destroyPeer();
-    changed();
-    retry = setTimeout(start, 4000);
-  }
-
-  // `later` gives a goodbye message time to reach the phones first
-  function destroyPeer(later) {
-    const old = peer;
-    peer = null;
-    if (old) setTimeout(() => { try { old.destroy(); } catch (e) {} }, later ? 400 : 0);
+  // Mark the room offline and hang up; waits a moment so a goodbye sent just before goes out first
+  function disconnect() {
+    clearInterval(sweep);
+    if (!client) return;
+    const c = client, stateTopic = `${base()}/state`;
+    client = null;
+    c.removeAllListeners("connect"); c.removeAllListeners("offline"); c.removeAllListeners("message");
+    setTimeout(() => {
+      c.publish(stateTopic, "off", { qos: 1, retain: true }, () => c.end());
+      setTimeout(() => c.end(true), 1500);
+    }, 400);
   }
 
   function stop() {
     clearTimeout(retry); clearTimeout(round.timer);
     broadcast({ t: "bye" });
     status = "off"; error = "";
-    destroyPeer(true); phones.clear();
+    disconnect(); phones.clear();
     persist(); changed();
   }
 
   function newRoom() {
     broadcast({ t: "bye" });
-    destroyPeer(true); phones.clear();
+    disconnect(); phones.clear();
     room = makeCode();
     status = "off";
     start();
   }
 
-  function attach(conn) {
-    conn.on("open", () => {
-      phones.set(conn.connectionId, { conn, player: null });
-      send(conn, playersMsg());
-      send(conn, armMsg());
-      changed();
+  function claim(id, i) {
+    phones.forEach((other, otherId) => {
+      if (otherId !== id && other.player === i) { other.player = null; send(otherId, { t: "you", player: null, reason: "taken" }); }
     });
-    conn.on("data", msg => onMessage(conn, msg));
-    conn.on("close", () => { phones.delete(conn.connectionId); changed(); });
-    conn.on("error", () => {});
-  }
-
-  function claim(ph, i) {
-    for (const other of phones.values()) {
-      if (other !== ph && other.player === i) { other.player = null; send(other.conn, { t: "you", player: null, reason: "taken" }); }
-    }
-    ph.player = i;
-    send(ph.conn, { t: "you", player: i });
-    send(ph.conn, armMsg());
+    phones.get(id).player = i;
+    send(id, { t: "you", player: i });
+    send(id, armMsg());
     changed();
   }
 
-  function onMessage(conn, m) {
-    const ph = phones.get(conn.connectionId);
-    if (!ph || !m || typeof m !== "object") return;
-    if (m.t === "ping") return send(conn, { t: "pong", c: +m.c || 0, h: performance.now() });
-    if (m.t === "hello") { send(conn, playersMsg()); if (ph.player !== null) send(conn, { t: "you", player: ph.player }); return send(conn, armMsg()); }
+  function onMessage(m) {
+    const id = typeof m.from === "string" && /^[a-z0-9]{8,16}$/.test(m.from) ? m.from : null;
+    if (!id) return;
+    const isNew = !phones.has(id);
+    if (isNew) phones.set(id, { player: null, seen: 0 });
+    const ph = phones.get(id);
+    ph.seen = Date.now();
+    if (isNew) changed();
+    if (m.t === "ping") return send(id, { t: "pong", c: +m.c || 0, h: performance.now() });
+    if (m.t === "hello") {
+      send(id, playersMsg());
+      if (ph.player !== null) send(id, { t: "you", player: ph.player });
+      return send(id, armMsg());
+    }
     if (m.t === "claim") {
       const i = Math.floor(+m.player);
-      if (i >= 0 && i < hooks.players().length) claim(ph, i);
+      if (i >= 0 && i < hooks.players().length) claim(id, i);
       return;
     }
     if (m.t === "join") {                    // a new player, made from the phone
       const name = String(m.name || "").replace(/\s+/g, " ").trim().slice(0, 24);
-      if (name) claim(ph, hooks.addPlayer(name));
+      if (name) claim(id, hooks.addPlayer(name));
       return;
     }
-    if (m.t === "leave") { ph.player = null; send(conn, { t: "you", player: null }); return changed(); }
+    if (m.t === "leave") { ph.player = null; send(id, { t: "you", player: null }); return changed(); }
+    if (m.t === "bye") { phones.delete(id); return changed(); }
     if (m.t === "buzz") return onBuzz(ph, m);
   }
 
@@ -221,13 +262,13 @@ const Buzzers = (() => {
   const playersMsg = () => ({ t: "players", list: hooks.players() });
 
   // Scores or names changed
-  function sync() { if (phones.size) broadcast(playersMsg()); }
+  function sync() { broadcast(playersMsg()); }
 
   // Player i was removed: later players move down one place
   function removed(i) {
-    phones.forEach(ph => {
-      if (ph.player === i) { ph.player = null; send(ph.conn, { t: "you", player: null, reason: "removed" }); }
-      else if (ph.player > i) { ph.player--; send(ph.conn, { t: "you", player: ph.player }); }
+    phones.forEach((ph, id) => {
+      if (ph.player === i) { ph.player = null; send(id, { t: "you", player: null, reason: "removed" }); }
+      else if (ph.player > i) { ph.player--; send(id, { t: "you", player: ph.player }); }
     });
     round.locked = round.locked.filter(x => x !== i).map(x => x > i ? x - 1 : x);
     round.entries = round.entries.filter(e => e.player !== i).map(e => ({ ...e, player: e.player > i ? e.player - 1 : e.player }));
@@ -235,10 +276,13 @@ const Buzzers = (() => {
     sync(); changed();
   }
 
+  // The phone link carries the room and which broker the game is on
   function link() {
-    const base = /^https?:$/.test(location.protocol) ? new URL("buzz.html", location.href).href : BUZZ.page;
-    return `${base}?room=${room}${BUZZ.server ? "&srv=" + encodeURIComponent(JSON.stringify(BUZZ.server)) : ""}`;
+    const page = /^https?:$/.test(location.protocol) ? new URL("buzz.html", location.href).href : BUZZ.page;
+    const custom = BUZZ.brokers[broker] !== defaultBrokers[broker];
+    return `${page}?room=${room}&b=${broker}${custom ? "&relay=" + encodeURIComponent(BUZZ.brokers[broker]) : ""}`;
   }
+  const defaultBrokers = [...BUZZ.brokers];
 
   return {
     init, start, stop, newRoom, open, close, wrong, unlock, sync, removed, link,

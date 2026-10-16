@@ -80,7 +80,11 @@ Players can buzz in from their own phones. Click **📱 Buzzers** in the header,
 
 **Setup:** the phones need to open `buzz.html` from a web address, so the game has to be online. The simplest way is GitHub Pages: in the repository on GitHub, go to **Settings → Pages**, set **Source** to *Deploy from a branch*, and choose `main` and `/ (root)`. The game is then at `https://grumpygumby.github.io/Jeopardy/`, and the phone link works. If you open the game from a file on your computer instead, the phone link still points at that GitHub Pages address (`BUZZ.page` in `buzzer.js`).
 
-Phones and the game connect directly to each other over WebRTC, using [PeerJS](https://peerjs.com). PeerJS's free public server only introduces them, and its relay servers carry the connection on networks that block direct links. Everyone needs an internet connection. To use your own PeerJS server instead, set `BUZZ.server` in `buzzer.js`.
+**How phones connect:** the game and the phones pass small messages through a free public MQTT broker (a message relay), over the same kind of secure WebSocket a chat app uses. Nothing connects device to device, so it works on home Wi-Fi, cellular data, and networks that block direct links. The game tries [EMQX's public broker](https://www.emqx.com/en/mqtt/public-mqtt5-broker) first, then Mosquitto's and HiveMQ's (`BUZZ.brokers` in `buzzer.js`), and the phone link says which one it's on. Everyone needs an internet connection.
+
+Public brokers aren't private: anyone who knows where to look can see the messages (player names, scores and buzzes), so don't put anything secret in the game.
+
+**If a phone can't connect,** the phone says why: it can't reach the buzzer server (check its internet), it can't find the game (check the code and that buzzers are on), or it's waiting for the game to come back. A phone that opens the link before buzzers are on connects as soon as they're turned on.
 
 ## Players
 

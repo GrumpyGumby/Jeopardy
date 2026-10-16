@@ -4,7 +4,7 @@ A reusable Jeopardy template you can use for any occasion, with zooming clue car
 
 ## Run it
 
-Open `index.html` in a browser. To host it, upload the three files (`index.html`, `styles.css`, `game.js`) to any static host, such as GitHub Pages.
+Open `index.html` in a browser. To host it, upload the four files (`index.html`, `styles.css`, `game.js`, `audio.js`) to any static host, such as GitHub Pages.
 
 ## Fill in your clues
 

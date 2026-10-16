@@ -4,7 +4,7 @@ A reusable Jeopardy template you can use for any occasion, with zooming clue car
 
 ## Run it
 
-Open `index.html` in a browser. To host it, upload the four files (`index.html`, `styles.css`, `game.js`, `audio.js`) to any static host, such as GitHub Pages.
+Open `index.html` in a browser. To host it, upload the files (`index.html`, `styles.css`, `game.js`, `audio.js`, `buzzer.js`, and `buzz.html` with `phone.js` for phone buzzers) to any static host, such as GitHub Pages.
 
 ## Fill in your clues
 
@@ -67,6 +67,20 @@ The music follows each clue through three moods built on the same theme, and cha
 Every click has a sound effect, including a swoosh in and out for clue cards, a twinkle for revealing the answer, a ding for right and a buzzer for wrong, a sting for Daily Doubles, a fanfare for the standings, and a ticking countdown that ends at "Pens down".
 
 Moving the pointer onto anything clickable plays a tiny blip, and so does moving with the Tab key. This helps players with low vision and gives the board a tactile feel. On the board the blip also tells you where you are: its pitch rises from the top row to the bottom row, and it pans from left to right by column. Like all sound, the blips start after the first click or key press, and **Sound FX** turns them off along with the other effects.
+
+## Phone buzzers
+
+Players can buzz in from their own phones. Click **📱 Buzzers** in the header, then **Turn on phone buzzers**. The panel shows a QR code, a link and a 4-letter room code. Each player opens the link on their phone, taps their podium (or adds themselves with **Add me**) and gets a big buzzer in their color and pattern.
+
+- **When it opens:** buzzers open on their own when a clue card opens and close when it closes. Daily Doubles and Final Jeopardy keep them closed and show a note on the phones.
+- **Who wins:** only the first press counts. Each phone keeps its clock in sync with the game, so buzzes are ordered by when the button was pressed, not when it arrived over the network. A player on slow Wi-Fi doesn't lose a buzz they won.
+- **How much slower:** the clue card and every phone list the buzz order, such as "First!", "+0.07 s", "+0.31 s". Each slower player's phone says "You were 0.07 s slower".
+- **Wrong answers:** marking the first player ✗ locks them out and reopens the buzzers for everyone else. **Reopen buzzers** on the card opens them again by hand.
+- **Reconnecting:** phones and the game reconnect by themselves after a refresh. **New room code** starts over with a new link.
+
+**Setup:** the phones need to open `buzz.html` from a web address, so the game has to be online. The simplest way is GitHub Pages: in the repository on GitHub, go to **Settings → Pages**, set **Source** to *Deploy from a branch*, and choose `main` and `/ (root)`. The game is then at `https://grumpygumby.github.io/Jeopardy/`, and the phone link works. If you open the game from a file on your computer instead, the phone link still points at that GitHub Pages address (`BUZZ.page` in `buzzer.js`).
+
+Phones and the game connect directly to each other over WebRTC, using [PeerJS](https://peerjs.com). PeerJS's free public server only introduces them, and its relay servers carry the connection on networks that block direct links. Everyone needs an internet connection. To use your own PeerJS server instead, set `BUZZ.server` in `buzzer.js`.
 
 ## Players
 

@@ -368,6 +368,40 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 /* Daily Double confetti: above everything, never in the way of a click */
 .confetti { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 30; pointer-events: none; }
 
+/* ---------- Phone buzzers ---------- */
+.msg { font-family: var(--f-data); color: var(--muted); font-size: 15px; margin: 0; max-width: 560px; line-height: 1.5; }
+.big-status { font-size: 18px; color: var(--ink); }
+.tab.buzz-tab.on { background: var(--cell); color: var(--gold); border-color: var(--cell-hi); }
+.buzz-body { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; }
+.join { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 20px 28px; }
+.qr { width: 220px; height: 220px; background: #fff; border-radius: 10px; padding: 8px; display: grid; place-items: center; }
+.qr svg { width: 100%; height: 100%; }
+.qr .msg { color: var(--edge); font-size: 13px; text-align: center; }
+.join-text { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; max-width: 420px; }
+.join-link { font-family: var(--f-data); font-size: 15px; color: var(--ink); overflow-wrap: anywhere; }
+.room-code { font-family: var(--f-display); font-size: 64px; letter-spacing: .25em; color: var(--gold); margin: 0; line-height: 1; text-shadow: 3px 3px 0 var(--edge); }
+.linked { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; width: min(460px, 100%); }
+.linked li { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; font-family: var(--f-data); font-size: 14px;
+  background: rgba(0, 3, 16, .35); border-radius: 6px; padding: 6px 10px; text-align: left; }
+.linked li span:last-child { color: var(--muted); font-size: 12px; }
+.linked li span.on { color: var(--good); }
+
+/* the buzz-in order on a clue card */
+.buzzes { display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 28px; }
+.buzz-live, .buzz-wait { font-family: var(--f-data); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: .06em; }
+.buzz-live { color: var(--good); animation: live 1.2s ease-in-out infinite; }
+.buzz-wait { color: var(--muted); }
+@keyframes live { 50% { opacity: .45; } }
+.buzz-order { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.buzz-order li { display: flex; align-items: center; gap: 2px; font-family: var(--f-data); font-size: 14px;
+  background: rgba(0, 3, 16, .35); border-radius: 999px; padding: 5px 12px 5px 8px; border: 2px solid transparent; }
+.buzz-order li .nm { font-weight: 600; text-transform: uppercase; margin-right: 8px; }
+.buzz-order li .dt { color: var(--muted); }
+.buzz-order li.first { border-color: var(--gold); background: rgba(242, 193, 78, .16); font-size: 16px; }
+.buzz-order li.first .dt { color: var(--gold); font-weight: 600; }
+.buzz-locked { font-family: var(--f-data); font-size: 13px; color: var(--bad); margin: 0; }
+.judge.buzzed { box-shadow: 0 0 0 3px var(--gold); background: rgba(242, 193, 78, .14); }
+
 /* ---------- Small screens ---------- */
 @media (max-width: 640px) {
   .app { padding: 12px 16px; }

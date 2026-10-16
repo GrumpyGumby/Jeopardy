@@ -202,7 +202,8 @@ function renderNav() {
     `<span class="nav-sp"></span>
      <button class="tab tool ${editMode ? "on" : ""}" data-act="edit-mode" aria-pressed="${editMode}">${editMode ? "Done editing" : "Edit clues"}</button>
      <button class="tab tool" data-act="new-game">New game</button>
-     <button class="tab tool snd ${Sound.get("muted") ? "" : "on"}" data-act="sound" title="Sound settings (M mutes)">${Sound.get("muted") ? "🔇 Muted" : "🔊 Sound"}</button>`;
+     <button class="tab tool snd ${Sound.get("muted") ? "" : "on"}" data-act="sound" title="Sound settings (M mutes)">${Sound.get("muted") ? "🔇 Muted" : "🔊 Sound"}</button>
+     <button class="tab tool buzz-tab ${Buzzers.active ? "on" : ""}" data-act="buzzers" title="Phone buzzers">${buzzTabLabel()}</button>`;
 }
 
 function renderBoard(r) {
@@ -237,6 +238,7 @@ function renderScores() {
        <span class="nm">${esc(p.name)}</span>
        <span class="sc ${p.score < 0 ? "neg" : ""}">${fmt(p.score)}</span>
      </button>`).join("") + `<button class="pod add" id="addPlayer">+ Player</button>`;
+  Buzzers.sync();
 }
 
 function renderFinal() {
@@ -305,6 +307,7 @@ function renderRules() {
     <ul>
       <li>Click a podium to rename a player, fix a score, or pick their color and pattern. <b>+ Player</b> adds one.</li>
       <li><b>Sound</b> in the header has a volume dial for everything, plus music speed and echo. Press <b>M</b> to mute or unmute.</li>
+      <li><b>📱 Buzzers</b> lets players buzz in from their phones: they scan the code, pick their podium, and the first press wins. Everyone else sees how much slower they were. Marking a player ✗ locks them out and reopens the buzzers for everyone else.</li>
       <li><b>Edit clues</b> lets you change any clue, answer or category, and the Final. It can also add a category, or delete one with the × on its header.</li>
       <li><b>New game</b> resets scores, used tiles and Daily Doubles but keeps names and clues.</li>
       <li>Everything saves in this browser, so a refresh won't lose the game.</li>
@@ -391,6 +394,7 @@ function closeOv(sound = "swooshOut") {
   if (ov.hidden || closing) return;
   closing = true;
   stopTimer();
+  Buzzers.close();
   Sound.sfx(sound);
   scene = null; updateMusic();   // the music turns back as the card shrinks
   const key = sourceTile && sourceTile.dataset.k;
@@ -419,10 +423,12 @@ function onTile(btn) {
   if (S.dd.includes(k)) {
     Sound.sfx("dd");
     setTimeout(confetti, 450);   // thrown on the sting's big brass hit
+    Buzzers.close("Daily Double! Only the player who found it answers.");
     return openOv(ddHTML(), btn);
   }
   Sound.sfx("swooshIn");
   openOv(clueHTML(), btn);
+  Buzzers.open();
 }
 
 function clueHTML() {
@@ -437,6 +443,7 @@ function clueHTML() {
     <p class="clue">${esc(q) || '<span class="muted">No clue yet. Use Edit clues to add one.</span>'}</p>
     <p class="answer" id="ans">${esc(a)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
+    ${cur.only === null && Buzzers.active ? `<div class="buzzes" id="buzzes" aria-live="polite">${buzzesHTML()}</div>` : ""}
     <div class="judges">${who.map(judgeHTML).join("")}</div>
     ${houseLine(i)}
     <div class="row">
@@ -448,7 +455,8 @@ function clueHTML() {
 
 function judgeHTML(j) {
   const p = S.players[j], st = cur.judged[j] || 0;
-  return `<div class="judge" style="--pc:${pcolor(j)}">
+  const buzzed = cur.only === null && Buzzers.round.winner === j;
+  return `<div class="judge ${buzzed ? "buzzed" : ""}" style="--pc:${pcolor(j)}" data-judge="${j}">
     ${chip(j)}<span class="nm">${esc(p.name)}</span>
     <button class="jb ok ${st === 1 ? "on" : ""}" data-j="${j}" data-d="1" aria-pressed="${st === 1}" aria-label="${esc(p.name)} right">✓</button>
     <button class="jb no ${st === -1 ? "on" : ""}" data-j="${j}" data-d="-1" aria-pressed="${st === -1}" aria-label="${esc(p.name)} wrong">✗</button>
@@ -472,6 +480,10 @@ function judge(j, d) {
   S.players[j].score += (next - prev) * cur.value;
   cur.judged[j] = next;
   if (next === 1) control = j;
+  if (cur.only === null) {                 // phone buzzers: a wrong answer locks that player out
+    if (next === -1) Buzzers.wrong(j);
+    else if (prev === -1) Buzzers.unlock(j);
+  }
   Sound.sfx(next === 1 ? "right" : next === -1 ? "wrong" : "undo");
   save(); renderScores();
   ov.querySelectorAll(`[data-j="${j}"]`).forEach(b => {
@@ -708,6 +720,7 @@ function removePlayer(i) {
     .filter(([k]) => +k !== i).map(([k, v]) => [+k > i ? +k - 1 : +k, v]));
   S.final.wagers = shift(S.final.wagers);
   S.final.judged = shift(S.final.judged);
+  Buzzers.removed(i);
   Sound.sfx("remove");
   save(); closeOv();
 }
@@ -947,6 +960,105 @@ function toggleMute() {
 }
 
 /* =========================================================
+   Phone buzzers (see buzzer.js): the panel, and buzz-ins on clue cards
+   ========================================================= */
+function buzzTabLabel() {
+  if (!Buzzers.active) return "📱 Buzzers";
+  if (Buzzers.status !== "ready") return "📱 Connecting…";
+  const n = Buzzers.phones.length;
+  return `📱 ${n} phone${n === 1 ? "" : "s"}`;
+}
+
+function buzzPanelHTML() {
+  return `<div class="card buzz-card" id="buzzPanel">
+    <h2 class="title">Phone buzzers</h2>
+    <div id="buzzBody" class="buzz-body">${buzzBodyHTML()}</div>
+    <div class="row"><button class="btn primary" data-act="close">Done</button></div>
+  </div>`;
+}
+
+function buzzBodyHTML() {
+  if (!Buzzers.active) return `
+    <p class="msg">Players buzz in from their own phones. They scan a code, pick their podium, and get a big buzzer.
+      The first press wins the clue, and everyone sees how much slower they were.</p>
+    <p class="msg">Phones and this screen need an internet connection.</p>
+    <div class="row"><button class="btn primary" data-act="buzz-on">Turn on phone buzzers</button></div>`;
+  if (Buzzers.status !== "ready") return `
+    <p class="msg big-status">${esc(Buzzers.error || "Connecting…")}</p>
+    <div class="row"><button class="btn ghost" data-act="buzz-off">Turn off</button></div>`;
+  const link = Buzzers.link(), linked = Buzzers.phones;
+  return `
+    <div class="join">
+      <div class="qr" id="qr" aria-label="QR code for the buzzer link"></div>
+      <div class="join-text">
+        <p class="eyebrow">Scan, or open this link on each phone</p>
+        <a class="join-link" href="${esc(link)}" target="_blank" rel="noopener">${esc(link.replace(/^https?:\/\//, ""))}</a>
+        <p class="eyebrow">Room code</p>
+        <p class="room-code">${Buzzers.room}</p>
+        <button class="btn mini" data-act="buzz-copy">Copy link</button>
+      </div>
+    </div>
+    <ul class="linked">${S.players.map((p, i) => {
+      const n = linked.filter(x => x === i).length;
+      return `<li>${chip(i)}<span>${esc(p.name)}</span><span class="${n ? "on" : ""}">${n ? "📱 linked" : "no phone yet"}</span></li>`;
+    }).join("")}</ul>
+    ${linked.some(x => x === null) ? `<p class="msg">${linked.filter(x => x === null).length} phone(s) connected, still picking a player.</p>` : ""}
+    <div class="row">
+      <button class="btn ghost" data-act="buzz-room">New room code</button>
+      <button class="btn ghost" data-act="buzz-off">Turn off phone buzzers</button>
+    </div>`;
+}
+
+async function drawQR() {
+  const box = $("qr");
+  if (!box) return;
+  try {
+    await loadScript(BUZZ.qrLib);
+    const qr = qrcode(0, "M");
+    qr.addData(Buzzers.link()); qr.make();
+    if ($("qr")) $("qr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  } catch (e) { if ($("qr")) $("qr").innerHTML = `<p class="msg">Couldn't draw the QR code. Use the link.</p>`; }
+}
+
+async function copyLink(btn) {
+  try { await navigator.clipboard.writeText(Buzzers.link()); btn.textContent = "Copied!"; Sound.sfx("save"); }
+  catch (e) { btn.textContent = "Copy failed. Select the link."; }
+}
+
+// The buzz-in order on a clue card
+function buzzesHTML() {
+  const R = Buzzers.round;
+  if (Buzzers.status !== "ready") return `<span class="buzz-wait">📱 Buzzers reconnecting…</span>`;
+  if (!R.list.length) return R.open ? `<span class="buzz-live">📱 Buzzers open</span>` : `<span class="buzz-wait">📱 Buzzers closed</span>`;
+  return `<ol class="buzz-order">${R.list.map((e, k) => `<li class="${k ? "" : "first"}" style="--pc:${pcolor(e.player)}">
+      ${chip(e.player)}<span class="nm">${esc(S.players[e.player] ? S.players[e.player].name : "?")}</span>
+      <span class="dt">${k ? `+${(e.delta / 1000).toFixed(2)} s` : "First!"}</span></li>`).join("")}</ol>
+    ${R.locked.length ? `<p class="buzz-locked">Locked out: ${R.locked.map(j => esc(S.players[j] ? S.players[j].name : "?")).join(", ")}</p>` : ""}
+    ${R.open && R.winner === null ? "" : `<button class="btn mini" data-act="buzz-reopen">Reopen buzzers</button>`}`;
+}
+
+Buzzers.init({
+  players: () => S.players.map((p, i) => ({ name: p.name, score: p.score, ...lookOf(p, i) })),
+  addPlayer: name => {
+    S.players.push({ name, score: 0, ...defaultLook(S.players.length) });
+    Sound.sfx("add");
+    save(); renderScores();
+    if (view === "final") render();
+    return S.players.length - 1;
+  },
+  first: j => {
+    Sound.sfx("buzzIn");
+    ov.querySelectorAll("[data-judge]").forEach(el => el.classList.toggle("buzzed", +el.dataset.judge === j));
+  },
+  changed: () => {
+    renderNav();
+    if ($("buzzBody") && !closing) { $("buzzBody").innerHTML = buzzBodyHTML(); drawQR(); }
+    if ($("buzzes")) $("buzzes").innerHTML = buzzesHTML();
+    if ($("buzzes") && Buzzers.round.winner === null) ov.querySelectorAll("[data-judge].buzzed").forEach(el => el.classList.remove("buzzed"));
+  }
+});
+
+/* =========================================================
    Events: every click goes through one listener
    ========================================================= */
 document.addEventListener("click", e => {
@@ -1000,9 +1112,17 @@ document.addEventListener("click", e => {
     case "final-clue":
       Sound.sfx("swooshIn"); Sound.sfx("finalReveal");
       scene = "final-clue"; updateMusic();
-      openOv(finalClueHTML()); return startTimer();
+      openOv(finalClueHTML());
+      Buzzers.close("Final Jeopardy! Write down your answer.");
+      return startTimer();
     case "standings":     return showStandings();
     case "sound":         Sound.sfx("pop"); return openOv(soundHTML());
+    case "buzzers":       Sound.sfx("pop"); openOv(buzzPanelHTML()); return drawQR();
+    case "buzz-on":       Sound.sfx("toggleOn"); return Buzzers.start();
+    case "buzz-off":      Sound.sfx("toggleOff"); return Buzzers.stop();
+    case "buzz-room":     if (confirm("Make a new room code? Every phone will need the new link.")) { Sound.sfx("shuffle"); Buzzers.newRoom(); } return;
+    case "buzz-copy":     return copyLink(t);
+    case "buzz-reopen":   Sound.sfx("click"); return Buzzers.open(Buzzers.round.locked);
     case "sound-reset":   Sound.reset(); Sound.sfx("save"); swapOv(soundHTML()); return renderNav();
     case "add-col":       return addColumn(view === "r1" ? 1 : 0);
     case "reshuffle-dd":  S.dd = pickDD(S.used); save(); Sound.sfx("shuffle"); return render();

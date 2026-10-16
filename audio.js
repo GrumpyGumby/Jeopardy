@@ -557,6 +557,10 @@ const Sound = (() => {
       D.crash(t + .42, .8, d); D.kick(t + .42, .8, d);
       [84, 88, 91, 96].forEach((m, i) => I.bell(m, t + .5 + i * .06, .5, 1, d));
     },
+    buzzIn(t, d) {                               // someone rang in: a bright two-tone ring
+      [[1047, 0], [1397, .085]].forEach(([f, o]) => voice({ type: "square", freq: f, t: t + o, dur: .07, gain: .07, attack: .003, decay: .05, sustain: .6, release: .06, filter: { freq: 3500 }, dest: d }));
+      I.bell(96, t + .085, .4, 1.2, d);
+    },
     select(t, d) { I.bell(91, t, .15, .9, d); I.pluck(79, t, .08, 1, d); },
     shuffle(t, d) { [79, 84, 76, 88, 81, 86].forEach((m, i) => I.pluck(m, t + i * .045, .1, 1.8, d)); },
     countdown(t, d) { D.tick(t, 1.6, d); voice({ type: "sine", freq: 1320, t, dur: .02, gain: .06, attack: .002, decay: .06, sustain: .01, release: .03, dest: d }); },

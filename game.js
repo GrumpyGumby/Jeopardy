@@ -226,8 +226,10 @@ function renderBoard(r) {
     const k = `${r}-${c}-${i}`;
     const [q, a] = clueOf(k);
     const blank = !q.trim() || !a.trim();
+    const media = editMode && Media.clean(S.edits[`m-${k}`]);
     h += `<button class="cell ${S.used[k] ? "used" : ""} ${blank ? "blank" : ""} ${editMode && S.dd.includes(k) ? "dd" : ""}" data-k="${k}"
-            aria-label="${esc(catName(r, c))} for ${v}${S.used[k] ? ", used" : ""}">${v}</button>`;
+            aria-label="${esc(catName(r, c))} for ${v}${S.used[k] ? ", used" : ""}${media ? ", has media" : ""}">${v}${media
+            ? `<span class="mbadge" title="${media.kind === "youtube" ? "YouTube video" : "Picture"}">${media.kind === "youtube" ? "▶" : "🖼"}</span>` : ""}</button>`;
   }));
   return h + `</div>`;
 }
@@ -251,6 +253,7 @@ function renderFinal() {
         <label>Category <input id="fnCat" value="${esc(F.cat)}"></label>
         <label>Clue <textarea id="fnQ" rows="3">${esc(F.clue)}</textarea></label>
         <label>Answer <input id="fnA" value="${esc(F.answer)}"></label>
+        ${Media.fields(S.edits["m-final"])}
       </div>
       <div class="row"><button class="btn primary" data-act="save-final">Save Final</button></div>
       <p class="hint">${n ? `<strong>${n}</strong>&nbsp;blank${n === 1 ? "" : "s"} left in the game` : "Every clue is filled in."}</p>
@@ -320,6 +323,7 @@ function render() {
   main.innerHTML = view === "r0" ? renderBoard(0)
                  : view === "r1" ? renderBoard(1)
                  : view === "rules" ? renderRules() : renderFinal();
+  if (editMode && view === "final") Media.update();
   updateMusic();
 }
 
@@ -395,6 +399,7 @@ function closeOv(sound = "swooshOut") {
   closing = true;
   stopTimer();
   Buzzers.close();
+  Sound.duck(false);
   Sound.sfx(sound);
   scene = null; updateMusic();   // the music turns back as the card shrinks
   const key = sourceTile && sourceTile.dataset.k;
@@ -428,6 +433,7 @@ function onTile(btn) {
   }
   Sound.sfx("swooshIn");
   openOv(clueHTML(), btn);
+  showMedia();
   Buzzers.open();
 }
 
@@ -435,11 +441,13 @@ function clueHTML() {
   const { r, c, i } = parseKey(cur.k);
   const [q, a] = clueOf(cur.k);
   const who = cur.only === null ? S.players.map((_, j) => j) : [cur.only];
-  return `<div class="card">
+  const media = S.edits[`m-${cur.k}`];
+  return `<div class="card ${Media.clean(media) ? "has-media" : ""}">
     <div class="card-top">
       <span class="eyebrow">${esc(catName(r, c))}${cur.only !== null ? " · Daily Double" : ""}</span>
       <span class="val">${fmt(cur.value)}</span>
     </div>
+    ${Media.html(media)}
     <p class="clue">${esc(q) || '<span class="muted">No clue yet. Use Edit clues to add one.</span>'}</p>
     <p class="answer" id="ans">${esc(a)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
@@ -617,6 +625,7 @@ function ddGo() {
   cur.pick = $("ddPick") ? +$("ddPick").value : null;
   Sound.sfx("ddGo");
   swapOv(clueHTML());
+  showMedia();
   $("revealBtn").focus({ preventScroll: true });
 }
 
@@ -632,24 +641,50 @@ function openEditor(k, btn) {
       <label>Category <input id="edCat" value="${esc(rawCatName(r, c))}" placeholder="Category ${c + 1}"></label>
       <label>Clue <textarea id="edQ" rows="3">${esc(q)}</textarea></label>
       <label>Answer <input id="edA" value="${esc(a)}"></label>
+      ${Media.fields(S.edits[`m-${k}`])}
     </div>
     <div class="row">
       <button class="btn ghost" data-act="close">Cancel</button>
       <button class="btn primary" data-act="save-edit" data-key="${k}">Save</button>
     </div>
   </div>`, btn);
+  Media.update();
 }
 
-function saveEdit(k) {
+// Save or clear a clue's media
+function setMedia(key, media) {
+  if (media) S.edits[key] = media; else delete S.edits[key];
+}
+function mediaError(text) {
+  Sound.sfx("wrong");
+  const el = $("mdMsg");
+  if (el) { el.textContent = text; el.classList.add("bad"); el.scrollIntoView({ block: "nearest" }); }
+}
+
+/* After a card is drawn: load uploaded pictures, and fade the music while a YouTube video is on screen */
+function showMedia() {
+  Media.hydrate(ov);
+  const card = ov.querySelector(".card");
+  const yt = card && card.querySelector(".media.yt");
+  Sound.duck(!!yt && (!yt.classList.contains("later") || card.classList.contains("revealed")));
+}
+
+async function saveEdit(k) {
   const { r, c } = parseKey(k);
+  const m = await Media.commit(S.edits[`m-${k}`]);
+  if (m.error) return mediaError(m.error);
+  setMedia(`m-${k}`, m.media);
   S.edits[k] = [$("edQ").value.trim(), $("edA").value.trim()];
   S.edits[`cat-${r}-${c}`] = $("edCat").value.trim();
   Sound.sfx("save");
   save(); closeOv();
 }
 
-function saveFinal() {
+async function saveFinal() {
+  const m = await Media.commit(S.edits["m-final"]);
+  if (m.error) return mediaError(m.error);
   S.edits.final = { cat: $("fnCat").value.trim(), clue: $("fnQ").value.trim(), answer: $("fnA").value.trim() };
+  setMedia("m-final", m.media);
   Sound.sfx("save");
   save(); render();
 }
@@ -740,7 +775,10 @@ function addColumn(r) {
   if (c >= MAX_CATEGORIES) return;
   // clear anything left over at this position from an earlier, wider board
   delete S.edits[`cat-${r}-${c}`];
-  ROUNDS[r].values.forEach((_, i) => { delete S.edits[`${r}-${c}-${i}`]; delete S.used[`${r}-${c}-${i}`]; });
+  ROUNDS[r].values.forEach((_, i) => {
+    Media.forget(S.edits[`m-${r}-${c}-${i}`]);
+    delete S.edits[`${r}-${c}-${i}`]; delete S.edits[`m-${r}-${c}-${i}`]; delete S.used[`${r}-${c}-${i}`];
+  });
   S.cols[r] = c + 1;
   Sound.sfx("add");
   save(); render();
@@ -758,17 +796,22 @@ function deleteColumn(r, c) {
     name: rawCatName(r, cc),
     clues: Array.from({ length: rows }, (_, i) => [...clueOf(key(cc, i))]),
     used: Array.from({ length: rows }, (_, i) => !!S.used[key(cc, i)]),
+    media: Array.from({ length: rows }, (_, i) => S.edits[`m-${key(cc, i)}`]),
     dd: S.dd.filter(k => { const p = parseKey(k); return p.r === r && p.c === cc; }).map(k => parseKey(k).i)
   }));
-  snap.splice(c, 1);
+  snap.splice(c, 1)[0].media.forEach(Media.forget);       // the deleted column's uploads go too
   for (let cc = 0; cc < n; cc++) {
     delete S.edits[`cat-${r}-${cc}`];
-    for (let i = 0; i < rows; i++) { delete S.edits[key(cc, i)]; delete S.used[key(cc, i)]; }
+    for (let i = 0; i < rows; i++) { delete S.edits[key(cc, i)]; delete S.edits[`m-${key(cc, i)}`]; delete S.used[key(cc, i)]; }
   }
   S.dd = S.dd.filter(k => parseKey(k).r !== r);
   snap.forEach((col, cc) => {
     S.edits[`cat-${r}-${cc}`] = col.name;
-    col.clues.forEach((qa, i) => { S.edits[key(cc, i)] = qa; if (col.used[i]) S.used[key(cc, i)] = true; });
+    col.clues.forEach((qa, i) => {
+      S.edits[key(cc, i)] = qa;
+      if (col.media[i]) S.edits[`m-${key(cc, i)}`] = col.media[i];
+      if (col.used[i]) S.used[key(cc, i)] = true;
+    });
     col.dd.forEach(i => S.dd.push(key(cc, i)));
   });
   S.cols[r] = n - 1;
@@ -792,11 +835,12 @@ function newGame() {
 function finalClueHTML() {
   const F = finalData();
   const list = finalists();
-  return `<div class="card">
+  return `<div class="card ${Media.clean(S.edits["m-final"]) ? "has-media" : ""}">
     <div class="card-top">
       <span class="eyebrow">Final Jeopardy · ${esc(F.cat) || "Category to come"}</span>
       <span class="timer" id="timer" role="timer" aria-live="off"></span>
     </div>
+    ${Media.html(S.edits["m-final"])}
     <p class="clue">${esc(F.clue) || '<span class="muted">No Final clue yet. Use Edit clues on the Final tab.</span>'}</p>
     <p class="answer" id="ans">${esc(F.answer)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
@@ -1074,6 +1118,8 @@ document.addEventListener("click", e => {
   if (t.dataset.fj) return judgeFinal(+t.dataset.fj, +t.dataset.d);
   if (t.dataset.player) { Sound.sfx("pop"); return openPlayer(+t.dataset.player); }
   if (t.dataset.ddp) return pickFinder(+t.dataset.ddp);
+  if (t.dataset.mkind) { Sound.sfx("select"); return Media.setKind(t.dataset.mkind); }
+  if (t.dataset.mwhen) { Sound.sfx("select"); return Media.setWhen(t.dataset.mwhen); }
   if (t.dataset.delcol) return deleteColumn(view === "r1" ? 1 : 0, +t.dataset.delcol);
   if (t.dataset.color) { Sound.sfx("select"); return setLook({ color: t.dataset.color }); }
   if (t.dataset.pattern) { Sound.sfx("select"); return setLook({ pattern: t.dataset.pattern }); }
@@ -1090,6 +1136,8 @@ document.addEventListener("click", e => {
     const on = ans.classList.toggle("shown");
     t.textContent = on ? "Hide answer" : "Reveal answer";
     t.setAttribute("aria-pressed", on);
+    const card = t.closest(".card");
+    if (card) { card.classList.toggle("revealed", on); showMedia(); }
     Sound.sfx(on ? "twinkle" : "untwinkle");
     if (scene) {
       const fin = scene.startsWith("final");
@@ -1113,6 +1161,7 @@ document.addEventListener("click", e => {
       Sound.sfx("swooshIn"); Sound.sfx("finalReveal");
       scene = "final-clue"; updateMusic();
       openOv(finalClueHTML());
+      showMedia();
       Buzzers.close("Final Jeopardy! Write down your answer.");
       return startTimer();
     case "standings":     return showStandings();
@@ -1138,6 +1187,7 @@ document.addEventListener("change", e => {
     S.final.wagers[i] = v; t.value = v;
     save();
   }
+  if (t.id === "mdFile") { Media.pick(t.files[0]); t.value = ""; return Sound.sfx("add"); }
   if (t.matches("input, select") && t.type !== "color") Sound.sfx("tick");
 });
 
@@ -1145,6 +1195,7 @@ document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "plColor") setLook({ color: t.value });
   if (t.id === "plName") $("lookName").textContent = t.value || "Player";
+  if (t.id === "mdUrl" || t.id === "mdYt") Media.input(t);
 });
 
 /* Dials: drag up/down (or left/right), scroll, arrow keys; double-click resets */

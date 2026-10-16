@@ -449,9 +449,15 @@ const Sound = (() => {
     verbOut.gain.setTargetAtTime(.3 * P.echo / 50, t, tc);
     if (mood) level(mood);
   }
+  let ducked = false;           // a video is playing on the clue card: get out of its way
   function level(m) {
     const lvl = m.duck && !P.duck ? m.level * 1.3 : m.level;
-    musicBus.gain.setTargetAtTime(P.musicOn ? lvl * P.music / 100 : 0, ctx.currentTime, .35);
+    musicBus.gain.setTargetAtTime(P.musicOn && !ducked ? lvl * P.music / 100 : 0, ctx.currentTime, .35);
+  }
+  function duck(on) {
+    if (ducked === !!on) return;
+    ducked = !!on;
+    if (ctx && mood) level(mood);
   }
 
   function tick() {
@@ -614,7 +620,7 @@ const Sound = (() => {
   }
 
   return {
-    unlock, music, sfx, blip, set, reset,
+    unlock, music, sfx, blip, set, reset, duck,
     get: key => P[key],
     defaults: () => defaults(),
     get musicOn() { return P.musicOn; }, get sfxOn() { return P.sfxOn; },

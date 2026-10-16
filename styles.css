@@ -402,6 +402,41 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .buzz-locked { font-family: var(--f-data); font-size: 13px; color: var(--bad); margin: 0; }
 .judge.buzzed { box-shadow: 0 0 0 3px var(--gold); background: rgba(242, 193, 78, .14); }
 
+/* ---------- Clue media: pictures, GIFs and YouTube ---------- */
+.media { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.media img { max-width: 100%; max-height: 44vh; object-fit: contain; border-radius: 8px; background: var(--edge);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .45); }
+.media.yt iframe { width: min(100%, calc(46vh * 16 / 9)); aspect-ratio: 16 / 9; border: 0; border-radius: 8px; background: #000;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .45); }
+.yt-link { font-family: var(--f-data); font-size: 12px; color: var(--muted); }
+.media.later { display: none; }                               /* shown once the answer is revealed */
+.card.revealed .media.later { display: flex; animation: fade-in var(--t-fade) ease both; }
+.media-missing { font-family: var(--f-data); font-size: 14px; }
+.card.has-media { gap: 16px; }
+.card.has-media .clue { font-size: clamp(22px, 3vw, 44px); }
+
+/* in the clue editor */
+.media-field { gap: 10px; }
+.media-field .flabel small { text-transform: none; letter-spacing: 0; }
+.media-field .seg { width: fit-content; }
+.media-pane { display: grid; gap: 8px; }
+.media-pane input, .media-field input[type=url] {
+  background: var(--edge); border: 2px solid var(--cell-hi); border-radius: 6px; padding: 10px 12px;
+  font-family: var(--f-clue); font-size: 16px; color: var(--ink); width: 100%;
+}
+.file-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-family: var(--f-data); font-size: 13px; }
+.file-btn { position: relative; overflow: hidden; display: inline-block; cursor: pointer; text-transform: uppercase; letter-spacing: .04em; color: var(--gold); }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.media-when { display: grid; gap: 8px; }
+.media-preview .media img { max-height: 180px; }
+.media-preview .media.yt iframe { width: min(100%, 320px); }
+.media-msg { margin: 0; min-height: 1em; font-family: var(--f-data); font-size: 13px; color: var(--good); }
+.media-msg.bad { color: var(--bad); }
+.media-msg:empty { display: none; }
+
+/* edit mode: which tiles have media */
+.cell .mbadge { position: absolute; bottom: 6px; left: 8px; font-size: 14px; text-shadow: none; filter: drop-shadow(0 1px 1px #000); }
+
 /* ---------- Small screens ---------- */
 @media (max-width: 640px) {
   .app { padding: 12px 16px; }

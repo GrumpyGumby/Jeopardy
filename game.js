@@ -16,13 +16,26 @@ const ROUNDS = [
 const FINAL = { cat: "", clue: "", answer: "" };
 
 /* Settings */
-const DRINKING = true;        // false hides every drink line and rule
 const FINAL_SECONDS = 30;     // Final Jeopardy countdown
-const DRINK = {
-  bonusSips: 2,               // bottom two rows give these out when answered right
-  winner: "Hands out 5 sips",
-  last: "Finishes their drink",
-  rest: "Drinks 2 sips"
+
+/* House rules template: an optional side game on top of the points.
+   Turn it into whatever fits the crowd (prizes, forfeits, chores, candy...).
+   Every field starts blank, and blank fields never show up in the game.
+   In any text, {n} is replaced with a number:
+     miss / right  → the clue's row, 1 (top) to 5 (bottom)
+     ddRight / ddWrong → the amount picked on the Daily Double screen */
+const HOUSE = {
+  title: "",       // heading on the Rules tab,               e.g. "Prizes"
+  miss: "",        // shown on every clue card,               e.g. "Miss: {n} push-ups"
+  right: "",       // shown on clue cards in rightRows,       e.g. "Right: pick a sticker"
+  rightRows: [3, 4], // rows that show `right` (0 = top row, 4 = bottom row)
+  ddPick: "",      // label for a 1–5 picker on Daily Doubles, e.g. "Tickets on the line"
+  ddRight: "",     // Daily Double, right answer,             e.g. "Right: win {n} tickets"
+  ddWrong: "",     // Daily Double, wrong answer,             e.g. "Wrong: lose {n} tickets"
+  winner: "",      // under the winner in the final standings, e.g. "Picks the next game"
+  last: "",        // under last place,                        e.g. "Does the dishes"
+  rest: "",        // under everyone else
+  rules: []        // extra bullet points for the Rules tab,  e.g. ["Ties split the prize."]
 };
 
 /* =========================================================
@@ -32,7 +45,7 @@ const KEY = "bearcat-jeopardy-v1";
 let S = load();       // the game state
 let view = "r0";      // r0 | r1 | final | rules
 let editMode = false; // "Edit clues" toggle
-let cur = null;       // the clue card that is open: { k, value, judged, only, sips }
+let cur = null;       // the clue card that is open: { k, value, judged, only, pick }
 
 function fresh() {
   return {
@@ -84,7 +97,7 @@ function esc(s) {
 }
 function fmt(n) { return (n < 0 ? "−$" : "$") + Math.abs(n).toLocaleString(); }
 function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
-function sips(n) { return `${n} sip${n === 1 ? "" : "s"}`; }
+function house(text, n) { return String(text || "").trim().replace(/\{n\}/g, n); }
 function parseKey(k) { const [r, c, i] = k.split("-").map(Number); return { r, c, i }; }
 
 function rawCatName(r, c) { return S.edits[`cat-${r}-${c}`] ?? ROUNDS[r].cats[c].name; }
@@ -207,13 +220,8 @@ function renderRules() {
       <li>Everyone with a positive score wagers up to their score after seeing the category.</li>
       <li>You get ${FINAL_SECONDS} seconds to write your answer once the clue is revealed.</li>
     </ul>
-    ${DRINKING ? `<h2>Drinks</h2>
-    <ul>
-      <li>Miss a clue: drink sips equal to its row (1 for the top row, 5 for the bottom).</li>
-      <li>Get a bottom-two-row clue right: hand out ${sips(DRINK.bonusSips)}.</li>
-      <li>Daily Double: pick 1–5 sips. Right, you hand them out; wrong, you drink them.</li>
-      <li>Final standings: the winner ${DRINK.winner.toLowerCase()}, last place ${DRINK.last.toLowerCase()}, everyone else ${DRINK.rest.toLowerCase()}.</li>
-    </ul>` : ""}
+    ${HOUSE.rules.length ? `<h2>${esc(HOUSE.title.trim() || "House rules")}</h2>
+    <ul>${HOUSE.rules.map(line => `<li>${esc(line)}</li>`).join("")}</ul>` : ""}
     <h2>Host controls</h2>
     <ul>
       <li>Click a podium to rename a player or fix a score. <b>+ Player</b> adds one.</li>
@@ -311,7 +319,7 @@ function onTile(btn) {
   const k = btn.dataset.k;
   if (editMode) return openEditor(k, btn);
   const { r, i } = parseKey(k);
-  cur = { k, value: ROUNDS[r].values[i], judged: {}, only: null, sips: null };
+  cur = { k, value: ROUNDS[r].values[i], judged: {}, only: null, pick: null };
   if (S.dd.includes(k)) return openOv(ddHTML(), btn);
   openOv(clueHTML(), btn);
 }
@@ -329,7 +337,7 @@ function clueHTML() {
     <p class="answer" id="ans">${esc(a)}</p>
     <div class="row"><button class="btn" id="revealBtn" aria-pressed="false">Reveal answer</button></div>
     <div class="judges">${who.map(judgeHTML).join("")}</div>
-    ${drinkLine(i)}
+    ${houseLine(i)}
     <div class="row">
       <button class="btn ghost" data-act="close">Back to board</button>
       <button class="btn primary" data-act="done">Done, mark used</button>
@@ -346,11 +354,13 @@ function judgeHTML(j) {
   </div>`;
 }
 
-function drinkLine(i) {
-  if (!DRINKING) return "";
-  if (cur.sips !== null) return `<p class="drink">Right: <b>hand out ${sips(cur.sips)}</b> · Wrong: <b>drink ${sips(cur.sips)}</b></p>`;
-  const bonus = i >= 3 ? ` · Right: <b>hand out ${sips(DRINK.bonusSips)}</b>` : "";
-  return `<p class="drink">Miss: <b>drink ${sips(i + 1)}</b>${bonus}</p>`;
+/* House-rule reminder under the judging buttons; hidden when HOUSE is blank */
+function houseLine(i) {
+  const parts = cur.only !== null
+    ? [house(HOUSE.ddRight, cur.pick ?? ""), house(HOUSE.ddWrong, cur.pick ?? "")]
+    : [house(HOUSE.miss, i + 1), HOUSE.rightRows.includes(i) ? house(HOUSE.right, i + 1) : ""];
+  const text = parts.filter(Boolean).map(esc).join(" · ");
+  return text ? `<p class="house">${text}</p>` : "";
 }
 
 /* ✓ / ✗ toggle: tapping the same mark again undoes it, switching marks swaps the points */
@@ -392,8 +402,8 @@ function ddHTML() {
       <label>Wager <input id="ddWager" type="number" inputmode="numeric" min="5" step="1" placeholder="5">
         <small id="ddMax">From $5 up to ${fmt(ddMax(0))}</small>
       </label>
-      ${DRINKING ? `<label>Sips on the line
-        <select id="ddSips">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select>
+      ${HOUSE.ddPick.trim() ? `<label>${esc(HOUSE.ddPick)}
+        <select id="ddPick">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select>
       </label>` : ""}
     </div>
     <div class="row">
@@ -416,7 +426,7 @@ function ddGo() {
   const wager = clamp(Math.round(+$("ddWager").value || 5), 5, max);
   cur.value = wager;
   cur.only = j;
-  cur.sips = DRINKING ? +$("ddSips").value : null;
+  cur.pick = $("ddPick") ? +$("ddPick").value : null;
   swapOv(clueHTML());
   $("revealBtn").focus({ preventScroll: true });
 }
@@ -569,12 +579,12 @@ function standingsHTML() {
     <ol class="standings">${ranked.map(p => {
       const win = p.score === hi, last = spread && p.score === lo;
       const place = ranked.findIndex(q => q.score === p.score) + 1;
-      const rule = !DRINKING ? "" : win ? DRINK.winner : last ? DRINK.last : DRINK.rest;
+      const rule = house(win ? HOUSE.winner : last ? HOUSE.last : HOUSE.rest);
       return `<li class="${win ? "win" : ""} ${last ? "last" : ""}">
         <span class="place">${place}</span>
         <span class="nm">${esc(p.name)}</span>
         <span class="sc ${p.score < 0 && !win ? "neg" : ""}">${fmt(p.score)}</span>
-        ${rule ? `<span class="rule">${rule}</span>` : ""}
+        ${rule ? `<span class="rule">${esc(rule)}</span>` : ""}
       </li>`;
     }).join("")}</ol>
     <div class="row"><button class="btn primary" data-act="close">Close</button></div>

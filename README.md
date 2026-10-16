@@ -17,9 +17,23 @@ Use either of these:
 
 | Setting | What it does |
 |---|---|
-| `DRINKING` | Set to `false` to hide every drink line and rule |
 | `FINAL_SECONDS` | Length of the Final Jeopardy countdown |
-| `DRINK` | Bonus sips and the drink rules for the final standings |
+| `HOUSE` | Optional house rules on top of the points, such as prizes, forfeits or chores. See below. |
+
+### House rules
+
+`HOUSE` is a blank template. Every field starts empty, and empty fields never appear in the game, so out of the box it's plain Jeopardy. Fill in only the fields you want:
+
+| Field | Where it shows |
+|---|---|
+| `title`, `rules` | A section on the Rules tab (`rules` is a list of bullet points) |
+| `miss` | Every clue card. `{n}` becomes the clue's row, 1–5 |
+| `right`, `rightRows` | Clue cards in the listed rows (0 = top, 4 = bottom) |
+| `ddPick` | Adds a 1–5 picker with this label to the Daily Double screen |
+| `ddRight`, `ddWrong` | Daily Double clue cards. `{n}` becomes the number picked |
+| `winner`, `last`, `rest` | Under each player in the final standings |
+
+For example, a classroom version might use `miss: "Miss: {n} jumping jacks"` and `winner: "Picks Friday's game"`.
 
 The animation speed lives in the `--t-open` and `--t-fade` variables in `styles.css`.
 

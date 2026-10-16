@@ -189,8 +189,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .jb:disabled { cursor: default; opacity: .35; }
 .jb.on:disabled { opacity: 1; }
 
-.drink { margin: 0; font-family: var(--f-data); font-size: clamp(13px, 1.3vw, 17px); color: var(--muted); }
-.drink b { color: var(--ink); font-weight: 600; }
+/* House-rule reminder on clue cards */
+.house { margin: 0; font-family: var(--f-data); font-size: clamp(13px, 1.3vw, 17px); color: var(--muted); }
 
 /* ---------- Daily Double ---------- */
 .dd-title { font-size: clamp(48px, 8vw, 120px); }
